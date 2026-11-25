@@ -1,0 +1,24 @@
+name: market-flow
+on:
+  schedule:
+    - cron: "30 7 * * 1-5"   # 平日 16:30 JST(東証の引け後)
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install yfinance pandas numpy plotly
+      - run: |
+          python market_flow.py --no-holdings -o docs/index.html
+          python market_flow.py --market us --no-holdings -o docs/us.html
+      - run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add docs
+          git diff --cached --quiet || git commit -m "Update market flow report"
+          git push

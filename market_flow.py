@@ -96,6 +96,32 @@ def rrg(close, sectors, bench, tail=8):
     return rs.tail(tail), mom.tail(tail)
 
 
+def fig_holdings(close, vol, groups, window):
+    """保有・監視銘柄の騰落率と売買代金の平常比を表にする。"""
+    rows = []
+    for g, tickers in groups.items():
+        for t in tickers:
+            if t not in close.columns or close[t].dropna().size < 64:
+                continue
+            c = close[t].dropna()
+            tv = (close[t] * vol[t])
+            rows.append([g, t, f"{(c.iloc[-1]/c.iloc[-2]-1)*100:+.2f}%",
+                         f"{(c.iloc[-1]/c.iloc[-6]-1)*100:+.2f}%",
+                         f"{(c.iloc[-1]/c.iloc[-22]-1)*100:+.2f}%",
+                         f"x{tv.tail(window).mean()/tv.tail(60).mean():.2f}"])
+    if not rows:
+        return None
+    cols = list(zip(*rows))
+    colors = [["#fff"] * len(rows)] * 2 + [
+        ["#d8f3dc" if v.startswith("+") else "#fde2dd" for v in col] for col in cols[2:5]
+    ] + [["#fff"] * len(rows)]
+    f = go.Figure(go.Table(
+        header=dict(values=["区分", "銘柄", "1日", "1週", "1ヶ月", "売買代金 平常比"], align="left"),
+        cells=dict(values=cols, align="left", fill_color=colors)))
+    f.update_layout(title="⑤ 保有・監視銘柄", height=120 + 28 * len(rows))
+    return f
+
+
 def fig_heatmap(m):
     cols = ["1日", "1週", "1ヶ月", "3ヶ月"]
     d = m.sort_values("1週", ascending=False)
@@ -171,20 +197,30 @@ def main():
     ap.add_argument("--market", choices=MARKETS, default="jp")
     ap.add_argument("--window", type=int, default=5, help="フロー集計期間(営業日)")
     ap.add_argument("--demo", action="store_true", help="合成データで実行")
+    ap.add_argument("--no-holdings", action="store_true", help="保有・監視銘柄の表を出さない")
     ap.add_argument("-o", "--output", default="market_flow.html")
     a = ap.parse_args()
 
     cfg = MARKETS[a.market]
     bench, bench_name = cfg["benchmark"]
     sectors = cfg["sectors"]
-    close, vol = load_prices([bench, *sectors], demo=a.demo)
+    groups = {}
+    if not a.no_holdings:
+        try:
+            import get_stock_price as gsp
+            groups = {"保有": gsp.owning_list, "監視": gsp.check_list}
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 保有銘柄を読み込めません: {e}")
+    extra = [t for g in groups.values() for t in g]
+    close, vol = load_prices(list(dict.fromkeys([bench, *sectors, *extra])), demo=a.demo)
     if bench not in close.columns or close[bench].isna().all():
         sys.exit("ベンチマークの価格を取得できませんでした")
 
     m = compute(close, vol, sectors, bench, a.window)
     asof = close.index[-1].date()
     figs = [fig_heatmap(m), fig_flow(m, a.window), fig_sankey(m, a.window),
-            fig_rrg(close, sectors, bench)]
+            fig_rrg(close, sectors, bench),
+            fig_holdings(close, vol, groups, a.window) if groups else None]
 
     top_in = m.sort_values("flow_pct").tail(3)["name"][::-1].tolist()
     top_out = m.sort_values("flow_pct").head(3)["name"].tolist()
