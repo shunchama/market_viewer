@@ -13,8 +13,11 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install yfinance pandas numpy plotly
-      - run: |
-          python market_flow.py --no-holdings -o docs/index.html
+      - env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python market_flow.py --no-holdings --notify -o docs/index.html
           python market_flow.py --market us --no-holdings -o docs/us.html
       - run: |
           git config user.name "github-actions"

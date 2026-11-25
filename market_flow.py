@@ -47,6 +47,26 @@ MARKETS = {
 }
 
 
+# 個別銘柄 -> セクター名(上の sectors の値と一致させる)。足りない銘柄は追加してください。
+STOCK_SECTOR = {
+    "4755.T": "情報通信・サービス", "9432.T": "情報通信・サービス",
+    "7201.T": "自動車・輸送機", "7012.T": "自動車・輸送機", "7014.T": "自動車・輸送機",
+    "9501.T": "電力・ガス", "7011.T": "機械", "7013.T": "機械",
+}
+
+
+def notify(text):
+    """SLACK_WEBHOOK_URL または DISCORD_WEBHOOK_URL に要約を送る(未設定なら何もしない)。"""
+    import json, os, urllib.request
+    for env, key in (("SLACK_WEBHOOK_URL", "text"), ("DISCORD_WEBHOOK_URL", "content")):
+        url = os.environ.get(env)
+        if url:
+            req = urllib.request.Request(url, json.dumps({key: text}).encode(),
+                                         {"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=15)
+            print(f"通知送信: {env}")
+
+
 def load_prices(tickers, demo=False):
     """(close, volume) の DataFrame を返す。"""
     if demo:
@@ -96,7 +116,7 @@ def rrg(close, sectors, bench, tail=8):
     return rs.tail(tail), mom.tail(tail)
 
 
-def fig_holdings(close, vol, groups, window):
+def fig_holdings(close, vol, groups, window, m):
     """保有・監視銘柄の騰落率と売買代金の平常比を表にする。"""
     rows = []
     for g, tickers in groups.items():
@@ -105,20 +125,40 @@ def fig_holdings(close, vol, groups, window):
                 continue
             c = close[t].dropna()
             tv = (close[t] * vol[t])
-            rows.append([g, t, f"{(c.iloc[-1]/c.iloc[-2]-1)*100:+.2f}%",
+            sec = STOCK_SECTOR.get(t, "未分類")
+            fl = m.loc[m["name"] == sec, "flow_pct"]
+            sec_txt = sec if fl.empty else f"{sec} ({fl.iloc[0]:+.1f}%)"
+            rows.append([g, t, sec_txt, f"{(c.iloc[-1]/c.iloc[-2]-1)*100:+.2f}%",
                          f"{(c.iloc[-1]/c.iloc[-6]-1)*100:+.2f}%",
                          f"{(c.iloc[-1]/c.iloc[-22]-1)*100:+.2f}%",
                          f"x{tv.tail(window).mean()/tv.tail(60).mean():.2f}"])
     if not rows:
         return None
     cols = list(zip(*rows))
-    colors = [["#fff"] * len(rows)] * 2 + [
-        ["#d8f3dc" if v.startswith("+") else "#fde2dd" for v in col] for col in cols[2:5]
+    colors = [["#fff"] * len(rows)] * 3 + [
+        ["#d8f3dc" if v.startswith("+") else "#fde2dd" for v in col] for col in cols[3:6]
     ] + [["#fff"] * len(rows)]
     f = go.Figure(go.Table(
-        header=dict(values=["区分", "銘柄", "1日", "1週", "1ヶ月", "売買代金 平常比"], align="left"),
-        cells=dict(values=cols, align="left", fill_color=colors)))
-    f.update_layout(title="⑤ 保有・監視銘柄", height=120 + 28 * len(rows))
+        header=dict(values=["区分", "銘柄", "セクター(フロー%)", "1日", "1週", "1ヶ月", "売買代金 平常比"], align="left"),
+        cells=dict(values=cols, align="left", fill_color=colors, height=34),
+        columnwidth=[50, 70, 170, 60, 60, 70, 100]))
+    f.update_layout(title="⑤ 保有・監視銘柄", height=140 + 48 * len(rows))
+    return f
+
+
+def fig_timeseries(close, vol, sectors, days=60):
+    """セクター別の累積フロー近似(値上がり率x売買代金)の推移。"""
+    tick = [t for t in sectors if t in close.columns]
+    daily = (close[tick].pct_change() * close[tick] * vol[tick]).tail(days)
+    cum = daily.cumsum()
+    scale = daily.abs().sum().sum()
+    f = go.Figure()
+    for t in sorted(tick, key=lambda t: cum[t].iloc[-1], reverse=True):
+        f.add_trace(go.Scatter(x=cum.index, y=cum[t] / scale * 100, mode="lines", name=sectors[t],
+                               hovertemplate=sectors[t] + " %{y:.1f}%<extra></extra>"))
+    f.add_hline(y=0, line_dash="dot")
+    f.update_layout(title=f"⑥ 累積フロー推移(直近{days}営業日・上昇=資金流入が継続)",
+                    yaxis_title="累積フロー (全体の絶対フローに対する %)", height=520)
     return f
 
 
@@ -198,6 +238,8 @@ def main():
     ap.add_argument("--window", type=int, default=5, help="フロー集計期間(営業日)")
     ap.add_argument("--demo", action="store_true", help="合成データで実行")
     ap.add_argument("--no-holdings", action="store_true", help="保有・監視銘柄の表を出さない")
+    ap.add_argument("--notify", action="store_true", help="要約を Slack/Discord Webhook に送る")
+    ap.add_argument("--offline", action="store_true", help="plotly.js をHTMLに埋め込む(CDN不要)")
     ap.add_argument("-o", "--output", default="market_flow.html")
     a = ap.parse_args()
 
@@ -220,7 +262,8 @@ def main():
     asof = close.index[-1].date()
     figs = [fig_heatmap(m), fig_flow(m, a.window), fig_sankey(m, a.window),
             fig_rrg(close, sectors, bench),
-            fig_holdings(close, vol, groups, a.window) if groups else None]
+            fig_holdings(close, vol, groups, a.window, m) if groups else None,
+            fig_timeseries(close, vol, sectors)]
 
     top_in = m.sort_values("flow_pct").tail(3)["name"][::-1].tolist()
     top_out = m.sort_values("flow_pct").head(3)["name"].tolist()
@@ -228,11 +271,13 @@ def main():
             f"<p>流入上位: <b>{' / '.join(top_in)}</b>　流出上位: <b>{' / '.join(top_out)}</b></p>"
             f"<p style='color:#888;font-size:12px'>フローは 値上がり率x売買代金 による近似で、実際のファンド資金流出入ではありません。"
             f"ベンチマーク: {bench_name}</p>")
-    body = "".join(f.to_html(full_html=False, include_plotlyjs="cdn" if i == 0 else False)
+    body = "".join(f.to_html(full_html=False, include_plotlyjs=("inline" if a.offline else "cdn") if i == 0 else False)
                    for i, f in enumerate(x for x in figs if x is not None))
     with open(a.output, "w", encoding="utf-8") as fh:
         fh.write(f"<html><head><meta charset='utf-8'><title>Sector Flow</title></head>"
                  f"<body style='font-family:sans-serif;max-width:1000px;margin:auto'>{head}{body}</body></html>")
+    if a.notify:
+        notify(f"[セクター資金フロー {a.market.upper()} {asof}]\n流入: {' / '.join(top_in)}\n流出: {' / '.join(top_out)}")
     print(f"流入上位: {top_in}\n流出上位: {top_out}\n出力: {a.output}")
 
 
