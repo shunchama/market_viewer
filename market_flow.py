@@ -1,20 +1,27 @@
 """セクター資金フロー可視化ツール
 
 どのセクターから資金が抜け、どのセクターに入っているかを1枚のHTMLに出力する。
+HTML上で期間(週数)・終了日・フローの種類を切り替えられる(再計算はブラウザ内)。
 
   python market_flow.py                 # 日本(TOPIX-17 ETF)
   python market_flow.py --market us     # 米国(SPDRセクターETF)
-  python market_flow.py --window 10     # フロー集計期間(営業日)
   python market_flow.py --demo          # 合成データで動作確認(ネット不要)
+  python market_flow.py --offline       # plotly.js を埋め込む(CDN不要)
 
-注意: 「資金フロー」は ETF の 値上がり率 x 売買代金 から作った近似値で、
-ファンドの実際の流出入額ではありません。
+フローの種類:
+  実フロー = ETF発行口数の増減 x 終値(設定・解約による資金流出入の推定)
+  近似     = 値上がり率 x 売買代金(口数データが無いときの代替)
+口数の履歴は data/shares_history.csv に蓄積する(Yahoo Financeから取得。
+欠けている分は手動でCSVに追記してもよい: date,ticker,shares)。
 """
 import argparse
+import datetime as dt
+import json
+import os
 import subprocess
 import sys
 
-for _pkg in ("yfinance", "pandas", "numpy", "plotly"):
+for _pkg in ("yfinance", "pandas", "numpy"):
     try:
         __import__(_pkg)
     except ImportError:
@@ -22,11 +29,11 @@ for _pkg in ("yfinance", "pandas", "numpy", "plotly"):
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 
 MARKETS = {
     "jp": {
-        "benchmark": ("1306.T", "TOPIX"),
+        "benchmark": ("1306.T", "TOPIX(NEXT FUNDS TOPIX連動型ETF 1306)"),
+        "source": "NEXT FUNDS TOPIX-17シリーズ(野村アセットマネジメント)のETF 1617〜1633 を各業種の代理として使用",
         "sectors": {
             "1617.T": "食品", "1618.T": "エネルギー資源", "1619.T": "建設・資材",
             "1620.T": "素材・化学", "1621.T": "医薬品", "1622.T": "自動車・輸送機",
@@ -37,7 +44,8 @@ MARKETS = {
         },
     },
     "us": {
-        "benchmark": ("SPY", "S&P500"),
+        "benchmark": ("SPY", "S&P500(SPDR S&P 500 ETF)"),
+        "source": "Select Sector SPDR ETF(State Street)を各セクターの代理として使用",
         "sectors": {
             "XLK": "情報技術", "XLF": "金融", "XLV": "ヘルスケア", "XLY": "一般消費財",
             "XLP": "生活必需品", "XLE": "エネルギー", "XLI": "資本財", "XLB": "素材",
@@ -45,7 +53,6 @@ MARKETS = {
         },
     },
 }
-
 
 # 個別銘柄 -> セクター名(上の sectors の値と一致させる)。足りない銘柄は追加してください。
 STOCK_SECTOR = {
@@ -57,7 +64,7 @@ STOCK_SECTOR = {
 
 def notify(text):
     """SLACK_WEBHOOK_URL または DISCORD_WEBHOOK_URL に要約を送る(未設定なら何もしない)。"""
-    import json, os, urllib.request
+    import urllib.request
     for env, key in (("SLACK_WEBHOOK_URL", "text"), ("DISCORD_WEBHOOK_URL", "content")):
         url = os.environ.get(env)
         if url:
@@ -67,6 +74,7 @@ def notify(text):
             print(f"通知送信: {env}")
 
 
+# ───────────────────────── データ取得 ─────────────────────────
 def load_prices(tickers, demo=False):
     """(close, volume) の DataFrame を返す。"""
     if demo:
@@ -81,9 +89,10 @@ def load_prices(tickers, demo=False):
         close = pd.DataFrame(100 * np.exp(ret.cumsum(0)), index=idx, columns=tickers)
         vol = pd.DataFrame(rng.lognormal(12, 0.3, (len(idx), n)) * (1 + 3 * np.abs(ret)),
                            index=idx, columns=tickers)
+        close.attrs["drift"] = dict(zip(tickers, drift))
         return close, vol
-    import yfinance as yf
     import time
+    import yfinance as yf
     # threads=False: 並列取得だとキャッシュDBが "database is locked" になることがある
     df = yf.download(list(tickers), period="1y", auto_adjust=True, progress=False, threads=False)
     close = df["Close"].copy()
@@ -107,154 +116,289 @@ def load_prices(tickers, demo=False):
     return close, vol
 
 
-def compute(close, vol, sectors, bench, window):
-    ret = close.pct_change()
-    turnover = close * vol
-    out = pd.DataFrame(index=[t for t in sectors if t in close.columns])
-    for label, n in (("1日", 1), ("1週", 5), ("1ヶ月", 21), ("3ヶ月", 63)):
-        out[label] = (close.iloc[-1] / close.iloc[-1 - n] - 1) * 100
-    # フロー近似 = 値上がり率 x 売買代金 の期間合計 → 全セクター合計に対する比率(%)
-    signed = (ret * turnover).tail(window).sum()
-    out["flow"] = signed[out.index]
-    out["flow_pct"] = out["flow"] / out["flow"].abs().sum() * 100
-    # 売買代金の増減(直近 window 日平均 / 過去60日平均)
-    out["turnover_ratio"] = (turnover.tail(window).mean() / turnover.tail(60).mean())[out.index]
-    out["name"] = [sectors[t] for t in out.index]
+def load_shares(tickers, index, store_path, demo=False, close=None):
+    """ETF発行口数(日次)を DataFrame で返す。取れない/変化の無い銘柄は列ごと NaN。
+
+    取得元: Yahoo Finance (yfinance の get_shares_full と、実行日のスナップショット)。
+    履歴は store_path のCSV(date,ticker,shares)に蓄積し、次回以降も使う。
+    """
+    out = pd.DataFrame(np.nan, index=index, columns=list(tickers))
+    if demo:
+        rng = np.random.default_rng(11)
+        drift = close.attrs.get("drift", {})
+        for k, t in enumerate(tickers):
+            if k % 6 == 5:  # 一部は口数データ無し(カバレッジ不足の再現)
+                continue
+            step = rng.normal(0, 0.002, len(index)) + drift.get(t, 0) * 0.5
+            out[t] = 1e6 * np.exp(step.cumsum())
+        return out
+
+    import yfinance as yf
+    store = pd.DataFrame(columns=["date", "ticker", "shares"])
+    if os.path.exists(store_path):
+        store = pd.read_csv(store_path, dtype={"ticker": str})
+    new_rows = []
+    today = pd.Timestamp.today().normalize()
+    for t in tickers:
+        try:
+            tk = yf.Ticker(t)
+            s = tk.get_shares_full(start=(index[0] - pd.Timedelta(days=7)).strftime("%Y-%m-%d"))
+            if s is not None and len(s):
+                s.index = pd.DatetimeIndex(s.index).tz_localize(None).normalize()
+                s = s[~s.index.duplicated(keep="last")]
+                new_rows += [(d.strftime("%Y-%m-%d"), t, float(v)) for d, v in s.items()]
+            else:  # 履歴が無ければ今日のスナップショットだけ記録
+                snap = tk.info.get("sharesOutstanding") or tk.info.get("impliedSharesOutstanding")
+                if snap:
+                    new_rows.append((today.strftime("%Y-%m-%d"), t, float(snap)))
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 口数取得失敗 {t}: {type(e).__name__}")
+    if new_rows:
+        store = pd.concat([store, pd.DataFrame(new_rows, columns=store.columns)])
+    store = (store.drop_duplicates(["date", "ticker"], keep="last")
+             .sort_values(["ticker", "date"]))
+    if len(store):
+        os.makedirs(os.path.dirname(os.path.abspath(store_path)), exist_ok=True)
+        store.to_csv(store_path, index=False)
+    store["date"] = pd.to_datetime(store["date"])
+    for t in tickers:
+        s = store[store["ticker"] == t].set_index("date")["shares"].astype(float)
+        if s.nunique() > 1:  # 一度も変化していない口数は「データ無し」とみなす
+            out[t] = s.reindex(index.union(s.index)).ffill().reindex(index)
     return out
 
 
-def rrg(close, sectors, bench, tail=8):
-    """相対ローテーショングラフ: x=相対強度(100中心) y=そのモメンタム。"""
-    rs = close[list(sectors)].div(close[bench], axis=0)
-    rs = rs / rs.rolling(60).mean() * 100          # 相対強度
-    mom = rs / rs.shift(10) * 100                  # 相対強度のモメンタム
-    return rs.tail(tail), mom.tail(tail)
+# ───────────────────────── 集計(通知・検証用) ─────────────────────────
+def flows(close, vol, shares, sectors, window):
+    """各セクターのフロー。proxy=値上がり率x売買代金, actual=口数増減x終値。単位: 通貨"""
+    tick = [t for t in sectors if t in close.columns]
+    proxy = (close[tick].pct_change() * close[tick] * vol[tick]).tail(window).sum()
+    actual = (shares[tick].diff() * close[tick]).tail(window).sum(min_count=1)
+    actual = actual.where(shares[tick].notna().any())
+    return pd.DataFrame({"name": [sectors[t] for t in tick], "proxy": proxy, "actual": actual})
 
 
-def fig_holdings(close, vol, groups, window, m):
-    """保有・監視銘柄の騰落率と売買代金の平常比を表にする。"""
-    rows = []
+def summary(fl):
+    mode = "actual" if fl["actual"].notna().mean() >= 0.7 else "proxy"
+    col = fl[mode].dropna().sort_values()
+    names = fl["name"]
+    return mode, [names[t] for t in col.index[::-1][:3]], [names[t] for t in col.index[:3]]
+
+
+# ───────────────────────── HTML ─────────────────────────
+def lst(series):
+    return [None if pd.isna(x) else round(float(x), 4) for x in series]
+
+
+def build_payload(close, vol, shares, sectors, bench, groups):
+    cols = [t for t in [bench, *sectors] if t in close.columns]
+    holdings = []
     for g, tickers in groups.items():
         for t in tickers:
-            if t not in close.columns or close[t].dropna().size < 64:
-                continue
-            c = close[t].dropna()
-            tv = (close[t] * vol[t])
-            sec = STOCK_SECTOR.get(t, "未分類")
-            fl = m.loc[m["name"] == sec, "flow_pct"]
-            sec_txt = sec if fl.empty else f"{sec} ({fl.iloc[0]:+.1f}%)"
-            rows.append([g, t, sec_txt, f"{(c.iloc[-1]/c.iloc[-2]-1)*100:+.2f}%",
-                         f"{(c.iloc[-1]/c.iloc[-6]-1)*100:+.2f}%",
-                         f"{(c.iloc[-1]/c.iloc[-22]-1)*100:+.2f}%",
-                         f"x{tv.tail(window).mean()/tv.tail(60).mean():.2f}"])
-    if not rows:
-        return None
-    cols = list(zip(*rows))
-    colors = [["#fff"] * len(rows)] * 3 + [
-        ["#d8f3dc" if v.startswith("+") else "#fde2dd" for v in col] for col in cols[3:6]
-    ] + [["#fff"] * len(rows)]
-    f = go.Figure(go.Table(
-        header=dict(values=["区分", "銘柄", "セクター(フロー%)", "1日", "1週", "1ヶ月", "売買代金 平常比"], align="left"),
-        cells=dict(values=cols, align="left", fill_color=colors, height=34),
-        columnwidth=[50, 70, 170, 60, 60, 70, 100]))
-    f.update_layout(title="⑤ 保有・監視銘柄", height=140 + 48 * len(rows))
-    return f
+            if t in close.columns and close[t].notna().sum() > 64:
+                cols.append(t)
+                holdings.append({"g": g, "t": t, "sector": STOCK_SECTOR.get(t, "未分類")})
+    cols = list(dict.fromkeys(cols))
+    return {
+        "dates": [d.strftime("%Y-%m-%d") for d in close.index],
+        "bench": bench,
+        "sectors": [{"t": t, "name": n} for t, n in sectors.items() if t in close.columns],
+        "holdings": holdings,
+        "close": {t: lst(close[t]) for t in cols},
+        "vol": {t: lst(vol[t]) for t in cols},
+        "shares": {t: (lst(shares[t]) if t in shares.columns and shares[t].notna().any() else None)
+                   for t in sectors if t in close.columns},
+    }
 
 
-def fig_timeseries(close, vol, sectors, days=60):
-    """セクター別の累積フロー近似(値上がり率x売買代金)の推移。"""
-    tick = [t for t in sectors if t in close.columns]
-    daily = (close[tick].pct_change() * close[tick] * vol[tick]).tail(days)
-    cum = daily.cumsum()
-    scale = daily.abs().sum().sum()
-    f = go.Figure()
-    for t in sorted(tick, key=lambda t: cum[t].iloc[-1], reverse=True):
-        f.add_trace(go.Scatter(x=cum.index, y=cum[t] / scale * 100, mode="lines", name=sectors[t],
-                               hovertemplate=sectors[t] + " %{y:.1f}%<extra></extra>"))
-    f.add_hline(y=0, line_dash="dot")
-    f.update_layout(title=f"⑥ 累積フロー推移(直近{days}営業日・上昇=資金流入が継続)",
-                    yaxis_title="累積フロー (全体の絶対フローに対する %)", height=520)
-    return f
+def sources_html(cfg, bench_name, asof, generated, demo, sectors):
+    rows = "".join(f"<tr><td>{t}</td><td>{n}</td></tr>" for t, n in sectors.items())
+    demo_note = ("<p class='warn'>※ DEMO: 合成の乱数データです。実際の市場データではありません。</p>"
+                 if demo else "")
+    return f"""
+<details class="src" open><summary>出典・計算方法・注意事項</summary>{demo_note}
+<h4>データの出典</h4>
+<ul>
+<li><b>株価・売買高</b>: Yahoo Finance(Pythonライブラリ <code>yfinance</code> 経由)。日足、分割・配当調整済みの終値、直近約1年。無料データのため遅延・欠損・訂正があり得ます。</li>
+<li><b>セクター</b>: {cfg['source']}。</li>
+<li><b>ベンチマーク</b>: {bench_name}。</li>
+<li><b>ETF発行口数</b>: Yahoo Finance(<code>get_shares_full</code> と、実行日ごとのスナップショット)。リポジトリの <code>data/shares_history.csv</code> に蓄積。ETFの口数がYahooで未提供・更新が遅い場合は「近似」に自動で切り替わります。公式値(運用会社・取引所の公表)で補うときはこのCSVに <code>date,ticker,shares</code> で追記してください。</li>
+<li><b>最新データ日</b>: {asof} ／ <b>ページ生成</b>: {generated}</li>
+</ul>
+<h4>計算方法</h4>
+<ul>
+<li><b>実フロー</b> = Σ(各日の発行口数の増減 × その日の終値)。設定(口数増)=流入、解約(口数減)=流出の推定。基準価額ではなく終値で評価するため誤差があります。</li>
+<li><b>近似フロー</b> = Σ(各日の値上がり率 × 売買代金)、売買代金 = 終値×出来高。値動きと売買の勢いからの推定で、実際の資金流出入ではありません。</li>
+<li><b>フロー%</b> = 各セクターのフロー ÷ 全セクターの|フロー|合計。</li>
+<li><b>サンキー図</b> = 流出額を流入セクターの大きさで按分した模式図。「AからBへ移った」という事実を示すものではありません。</li>
+<li><b>RRG</b> = 相対強度(セクター÷ベンチマーク、60日平均=100)とその10日モメンタム。</li>
+<li><b>保有銘柄のセクター</b>は <code>market_flow.py</code> の <code>STOCK_SECTOR</code> で手動指定しています。</li>
+</ul>
+<details><summary>対象ETF一覧</summary><table class="mini"><tr><th>コード</th><th>セクター</th></tr>{rows}</table></details>
+<p class="warn">本ページは情報提供のみを目的とし、投資助言ではありません。</p>
+</details>"""
 
 
-def fig_heatmap(m):
-    cols = ["1日", "1週", "1ヶ月", "3ヶ月"]
-    d = m.sort_values("1週", ascending=False)
-    z = d[cols].values
-    lim = np.nanmax(np.abs(z))
-    f = go.Figure(go.Heatmap(
-        z=z, x=cols, y=d["name"], zmid=0, zmin=-lim, zmax=lim,
-        colorscale="RdYlGn", text=np.round(z, 1), texttemplate="%{text}%",
-        hovertemplate="%{y} %{x}: %{z:.2f}%<extra></extra>"))
-    f.update_yaxes(autorange="reversed")
-    f.update_layout(title="① セクター別騰落率(上ほど直近1週間が強い)", height=60 + 30 * len(d))
-    return f
+PAGE = r"""<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sector Flow</title>
+__PLOTLY__
+<style>
+body{font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;max-width:1040px;margin:auto;padding:0 12px 60px;color:#222}
+h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
+.ctl{position:sticky;top:0;z-index:5;background:#fffffff2;backdrop-filter:blur(4px);padding:10px 0;border-bottom:1px solid #ddd;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ctl button,.ctl select,.ctl input{font:inherit;padding:5px 10px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer}
+.ctl button.on{background:#264653;color:#fff;border-color:#264653}
+.ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
+.sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
+.chart{width:100%}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
+table.h th,table.h td,table.mini th,table.mini td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
+table.h th,table.mini th{background:#e8edf3}.up{background:#d8f3dc}.dn{background:#fde2dd}
+.src{margin-top:34px;font-size:13px;line-height:1.7;background:#f7f8fa;padding:10px 16px;border-radius:8px}
+.src summary{cursor:pointer;font-weight:600}.src h4{margin:12px 0 2px}.warn{color:#b5503a}
+code{background:#eceff3;padding:1px 4px;border-radius:3px}
+</style></head><body>
+<h2>セクター資金フロー <small id="mk"></small></h2>
+<p class="sub" id="asof"></p>
+<div class="ctl">
+ <label>期間</label>
+ <span id="presets"></span>
+ <input type="number" id="wk" min="1" max="26" title="任意の週数"><label>週</label>
+ <label>終了日</label><button id="prev">◀ 前週</button><input type="date" id="end"><button id="next">次週 ▶</button><button id="latest">最新</button>
+ <label>フロー</label>
+ <select id="mode"><option value="auto">自動</option><option value="actual">実フロー(口数×価格)</option><option value="proxy">近似(値動き×売買代金)</option></select>
+</div>
+<p class="sum" id="sum"></p><p class="note" id="modenote"></p>
+<div id="c1" class="chart"></div><p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。</p>
+<div id="c2" class="chart"></div><p class="note" id="n2"></p>
+<div id="c3" class="chart"></div><p class="note">③ 流出額を流入セクターの大きさで按分した模式図です。実際の資金の行き先を示すものではありません。</p>
+<div id="c4" class="chart"></div><p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。反時計回りに循環するとされます。</p>
+<div id="hold" style="display:none"><h3 style="font-weight:400">⑤ 保有・監視銘柄</h3><div id="c5"></div></div>
+<div id="c6" class="chart"></div><p class="note" id="n6"></p>
+__SOURCES__
+<script type="application/json" id="data">__DATA__</script>
+<script>
+const D=JSON.parse(document.getElementById('data').textContent);
+const META=__META__;
+const N=D.dates.length, MIN_END=Math.min(80,N-1), secs=D.sectors, C=D.close, V=D.vol, S=D.shares, B=D.bench;
+const st={end:N-1,weeks:META.weeks,mode:'auto'};
+const $=id=>document.getElementById(id);
+const pct=(a,b)=>(a==null||b==null||b===0)?null:(a/b-1)*100;
+const fmt=(x,d=1)=>x==null?'-':(x>=0?'+':'')+x.toFixed(d)+'%';
+const oku=x=>(x/1e8).toFixed(1)+(META.cur==='JPY'?'億円':'億ドル');
+const LAY={font:{family:'-apple-system,Hiragino Sans,Noto Sans JP,sans-serif'},margin:{l:140,r:30,t:50,b:50}};
 
+function proxyFlow(t,a,b){let s=0;for(let i=a+1;i<=b;i++){const c=C[t][i],p=C[t][i-1],v=V[t][i];if(c==null||p==null||v==null)continue;s+=(c/p-1)*c*v}return s}
+function actualFlow(t,a,b){const s=S[t];if(!s)return null;let x=0,n=0;for(let i=a+1;i<=b;i++){const c=C[t][i];if(s[i]==null||s[i-1]==null||c==null)continue;x+=(s[i]-s[i-1])*c;n++}return n?x:null}
+function dayFlow(t,i,mode){const c=C[t][i];if(c==null)return null;
+ if(mode==='actual'){const s=S[t];return(s&&s[i]!=null&&s[i-1]!=null)?(s[i]-s[i-1])*c:null}
+ const p=C[t][i-1],v=V[t][i];return(p==null||v==null)?null:(c/p-1)*c*v}
+function effMode(a,e){if(st.mode!=='auto')return st.mode;
+ const n=secs.filter(x=>actualFlow(x.t,a,e)!==null).length;return n>=secs.length*0.7?'actual':'proxy'}
+const flowOf=(t,a,e,m)=>m==='actual'?actualFlow(t,a,e):proxyFlow(t,a,e);
 
-def fig_flow(m, window):
-    d = m.sort_values("flow_pct")
-    f = go.Figure(go.Bar(
-        x=d["flow_pct"], y=d["name"], orientation="h",
-        marker_color=np.where(d["flow_pct"] >= 0, "#2a9d8f", "#e76f51"),
-        customdata=d["turnover_ratio"],
-        hovertemplate="%{y}<br>フロー %{x:.1f}%<br>売買代金 平常比 x%{customdata:.2f}<extra></extra>"))
-    f.update_layout(title=f"② 資金フロー近似(直近{window}営業日・右=流入 / 左=流出)",
-                    xaxis_title="全セクターの絶対フロー合計に対する比率 (%)",
-                    height=60 + 30 * len(d))
-    return f
+function metrics(){
+ const e=st.end,w=Math.min(st.weeks*5,e),a=e-w,mode=effMode(a,e);
+ const rows=secs.map(x=>{const t=x.t,c=C[t];
+  let tw=0,tl=0,nw=0,nl=0;for(let i=Math.max(1,e-59);i<=e;i++){const q=c[i]*V[t][i];if(c[i]==null)continue;tl+=q;nl++;if(i>e-w){tw+=q;nw++}}
+  return{t,name:x.name,r1:pct(c[e],c[e-1]),r5:pct(c[e],c[e-5]),r21:pct(c[e],c[e-21]),r63:pct(c[e],c[e-63]),
+   flow:flowOf(t,a,e,mode),tr:(nw&&nl&&tl)?(tw/nw)/(tl/nl):null}});
+ const ok=rows.filter(r=>r.flow!=null),tot=ok.reduce((s,r)=>s+Math.abs(r.flow),0)||1;
+ rows.forEach(r=>r.pct=r.flow==null?null:r.flow/tot*100);
+ return{rows,mode,a,e,w,missing:rows.length-ok.length};
+}
 
+function render(){
+ const m=metrics(),{rows,mode,a,e,w}=m,unit=mode==='actual'?'実フロー(口数増減×終値)':'近似フロー(値上がり率×売買代金)';
+ const rng=`${D.dates[a]} → ${D.dates[e]}(${w}営業日)`;
+ $('asof').textContent=`終了日 ${D.dates[e]} ／ 最新データ ${D.dates[N-1]}`;
+ const srt=rows.filter(r=>r.pct!=null).sort((x,y)=>y.pct-x.pct);
+ $('sum').innerHTML=srt.length?`流入上位: <b>${srt.slice(0,3).map(r=>r.name).join(' / ')}</b>　流出上位: <b>${srt.slice(-3).reverse().map(r=>r.name).join(' / ')}</b>`:'フローを計算できるデータがありません';
+ $('modenote').textContent=`集計期間 ${rng}｜${unit}`+(m.missing?`｜口数データが無い${m.missing}業種は除外`:'')+(mode==='proxy'&&st.mode==='auto'?'｜口数データが不足しているため近似を使用中':'');
+ document.querySelectorAll('#presets button').forEach(b=>b.classList.toggle('on',+b.dataset.w===st.weeks));
+ $('wk').value=st.weeks;$('end').value=D.dates[e];$('mode').value=st.mode;
 
-def fig_sankey(m, window):
-    out = m[m["flow"] < 0]
-    inn = m[m["flow"] > 0]
-    if out.empty or inn.empty:
-        return None
-    labels = [f"{n}(流出)" for n in out["name"]] + [f"{n}(流入)" for n in inn["name"]]
-    src, dst, val = [], [], []
-    total_in = inn["flow"].sum()
-    for i, (_, o) in enumerate(out.iterrows()):
-        for j, (_, p) in enumerate(inn.iterrows()):
-            src.append(i)
-            dst.append(len(out) + j)
-            val.append(abs(o["flow"]) * p["flow"] / total_in)
-    colors = ["#e76f51"] * len(out) + ["#2a9d8f"] * len(inn)
-    f = go.Figure(go.Sankey(
-        node=dict(label=labels, color=colors, pad=12),
-        link=dict(source=src, target=dst, value=val,
-                  color=["rgba(231,111,81,0.25)"] * len(val))))
-    f.update_layout(title=f"③ 資金の移動イメージ(流出セクター → 流入セクター・直近{window}営業日)",
-                    height=520)
-    return f
+ // ① heatmap
+ const h=[...rows].sort((x,y)=>(y.r5??-1e9)-(x.r5??-1e9)),cols=['1日','1週','1ヶ月','3ヶ月'];
+ const z=h.map(r=>[r.r1,r.r5,r.r21,r.r63]),lim=Math.max(1,...z.flat().filter(v=>v!=null).map(Math.abs));
+ Plotly.react('c1',[{type:'heatmap',z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,colorscale:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
+  text:z.map(rw=>rw.map(v=>v==null?'':v.toFixed(1)+'%')),texttemplate:'%{text}',hovertemplate:'%{y} %{x}: %{z:.2f}%<extra></extra>'}],
+  {...LAY,title:{text:'① セクター別騰落率'},height:80+28*h.length,yaxis:{autorange:'reversed'}},{displayModeBar:false});
 
+ // ② flow bars
+ const f=[...srt].reverse();
+ Plotly.react('c2',[{type:'bar',orientation:'h',x:f.map(r=>r.pct),y:f.map(r=>r.name),
+  marker:{color:f.map(r=>r.pct>=0?'#2a9d8f':'#e76f51')},
+  customdata:f.map(r=>[oku(r.flow),r.tr==null?'-':r.tr.toFixed(2)]),
+  hovertemplate:'%{y}<br>フロー %{x:.1f}%(%{customdata[0]})<br>売買代金 平常比 x%{customdata[1]}<extra></extra>'}],
+  {...LAY,title:{text:'② 資金フロー(右=流入 / 左=流出)'},xaxis:{title:{text:'全セクターの|フロー|合計に対する比率 (%)'}},height:80+28*f.length},{displayModeBar:false});
+ $('n2').textContent=`② ${unit}。${rng}。`+(mode==='actual'?'設定・解約の推定のため、現物拠出など実際の資金移動と差が出ます。':'実際のファンド資金流出入ではありません。');
 
-def fig_rrg(close, sectors, bench):
-    rs, mom = rrg(close, [t for t in sectors if t in close.columns], bench)
-    f = go.Figure()
-    for t in rs.columns:
-        f.add_trace(go.Scatter(x=rs[t], y=mom[t], mode="lines+markers", name=sectors[t],
-                               marker=dict(size=[4] * (len(rs) - 1) + [11]),
-                               hovertemplate=sectors[t] + "<br>相対強度 %{x:.1f}<br>モメンタム %{y:.1f}<extra></extra>"))
-    f.add_hline(y=100, line_dash="dot")
-    f.add_vline(x=100, line_dash="dot")
-    for x, y, txt in ((1, 1, "Leading 先導"), (0, 1, "Improving 改善"),
-                      (0, 0, "Lagging 出遅れ"), (1, 0, "Weakening 失速")):
-        f.add_annotation(xref="paper", yref="paper", x=x, y=y, text=txt, showarrow=False,
-                         xanchor="right" if x else "left", yanchor="top" if y else "bottom",
-                         font=dict(size=13, color="gray"))
-    f.update_layout(title="④ セクターローテーション(RRG)— 大きい点が最新、反時計回りに循環",
-                    xaxis_title="ベンチマーク比 相対強度", yaxis_title="相対強度のモメンタム",
-                    height=620)
-    return f
+ // ③ sankey
+ const outs=srt.filter(r=>r.flow<0),ins=srt.filter(r=>r.flow>0);
+ if(outs.length&&ins.length){const tin=ins.reduce((s,r)=>s+r.flow,0),src=[],dst=[],val=[];
+  outs.forEach((o,i)=>ins.forEach((p,j)=>{src.push(i);dst.push(outs.length+j);val.push(Math.abs(o.flow)*p.flow/tin)}));
+  Plotly.react('c3',[{type:'sankey',node:{label:[...outs.map(r=>r.name+'(流出)'),...ins.map(r=>r.name+'(流入)')],
+   color:[...outs.map(()=>'#e76f51'),...ins.map(()=>'#2a9d8f')],pad:12},
+   link:{source:src,target:dst,value:val,color:val.map(()=> 'rgba(231,111,81,0.25)')}}],
+   {...LAY,title:{text:'③ 資金の移動イメージ(流出 → 流入)'},height:520,margin:{l:20,r:20,t:50,b:20}},{displayModeBar:false});
+ }else Plotly.react('c3',[],{...LAY,title:{text:'③ 資金の移動イメージ(流出または流入のセクターがありません)'},height:120});
+
+ // ④ RRG
+ const rs=(t,i)=>C[t][i]/C[B][i],rsn=(t,i)=>{if(i<59)return null;let s=0;for(let k=i-59;k<=i;k++)s+=rs(t,k);return rs(t,i)/(s/60)*100},
+  mom=(t,i)=>{const p=rsn(t,i),q=rsn(t,i-10);return(p==null||q==null)?null:p/q*100};
+ const tr=secs.map(x=>{const xs=[],ys=[];for(let i=e-7;i<=e;i++){const p=rsn(x.t,i),q=mom(x.t,i);if(p!=null&&q!=null){xs.push(p);ys.push(q)}}
+  return{type:'scatter',mode:'lines+markers',name:x.name,x:xs,y:ys,marker:{size:xs.map((_,k)=>k===xs.length-1?11:4)},
+   hovertemplate:x.name+'<br>相対強度 %{x:.1f}<br>モメンタム %{y:.1f}<extra></extra>'}});
+ const q=(x,y,t)=>({xref:'paper',yref:'paper',x,y,text:t,showarrow:false,xanchor:x?'right':'left',yanchor:y?'top':'bottom',font:{size:13,color:'gray'}});
+ Plotly.react('c4',tr,{...LAY,title:{text:'④ セクターローテーション(RRG)'},height:620,margin:{l:60,r:20,t:50,b:50},
+  xaxis:{title:{text:'ベンチマーク比 相対強度'}},yaxis:{title:{text:'相対強度のモメンタム'}},
+  shapes:[{type:'line',xref:'paper',x0:0,x1:1,yref:'y',y0:100,y1:100,line:{dash:'dot'}},{type:'line',yref:'paper',y0:0,y1:1,xref:'x',x0:100,x1:100,line:{dash:'dot'}}],
+  annotations:[q(1,1,'Leading 先導'),q(0,1,'Improving 改善'),q(0,0,'Lagging 出遅れ'),q(1,0,'Weakening 失速')]},{displayModeBar:false});
+
+ // ⑤ holdings
+ if(D.holdings.length){$('hold').style.display='';
+  const cls=v=>v==null?'':(v>=0?'up':'dn'),byName=Object.fromEntries(rows.map(r=>[r.name,r]));
+  $('c5').innerHTML='<table class="h"><tr><th>区分</th><th>銘柄</th><th>セクター(フロー%)</th><th>1日</th><th>1週</th><th>1ヶ月</th></tr>'+
+   D.holdings.map(x=>{const c=C[x.t],r=byName[x.sector],sec=r?`${x.sector} (${fmt(r.pct)})`:x.sector,
+    p=[pct(c[e],c[e-1]),pct(c[e],c[e-5]),pct(c[e],c[e-21])];
+    return`<tr><td>${x.g}</td><td>${x.t}</td><td>${sec}</td>`+p.map(v=>`<td class="${cls(v)}">${fmt(v,2)}</td>`).join('')+'</tr>'}).join('')+'</table>'}
+
+ // ⑥ cumulative
+ const s0=Math.max(1,e-59),ser=secs.map(x=>{let c=0;const ys=[];for(let i=s0;i<=e;i++){const d=dayFlow(x.t,i,mode);c+=d||0;ys.push(c)}
+  const any=(()=>{for(let i=s0;i<=e;i++)if(dayFlow(x.t,i,mode)!=null)return true;return false})();return{x,ys,any}}).filter(o=>o.any);
+ let sc=0;ser.forEach(o=>{for(let i=s0;i<=e;i++)sc+=Math.abs(dayFlow(o.x.t,i,mode)||0)});sc=sc||1;
+ ser.sort((p,q)=>q.ys[q.ys.length-1]-p.ys[p.ys.length-1]);
+ Plotly.react('c6',ser.map(o=>({type:'scatter',mode:'lines',name:o.x.name,x:D.dates.slice(s0,e+1),y:o.ys.map(v=>v/sc*100),
+  hovertemplate:o.x.name+' %{y:.1f}%<extra></extra>'})),
+  {...LAY,title:{text:'⑥ 累積フロー推移(直近60営業日)'},yaxis:{title:{text:'累積フロー (全体の|フロー|に対する %)'}},height:520,margin:{l:60,r:20,t:50,b:50}},{displayModeBar:false});
+ $('n6').textContent=`⑥ ${unit}。上昇が続くセクターは資金流入が継続しています。`;
+}
+
+// ── controls ──
+$('mk').textContent=META.label;
+[[1,'1週'],[2,'2週'],[4,'4週'],[13,'13週']].forEach(([w,l])=>{const b=document.createElement('button');b.textContent=l;b.dataset.w=w;
+ b.onclick=()=>{st.weeks=w;render()};$('presets').appendChild(b)});
+$('wk').onchange=ev=>{st.weeks=Math.max(1,Math.min(26,+ev.target.value||1));render()};
+$('mode').onchange=ev=>{st.mode=ev.target.value;render()};
+$('end').min=D.dates[MIN_END];$('end').max=D.dates[N-1];
+$('end').onchange=ev=>{let i=D.dates.length-1;while(i>MIN_END&&D.dates[i]>ev.target.value)i--;st.end=i;render()};
+$('prev').onclick=()=>{st.end=Math.max(MIN_END,st.end-5);render()};
+$('next').onclick=()=>{st.end=Math.min(N-1,st.end+5);render()};
+$('latest').onclick=()=>{st.end=N-1;render()};
+render();
+</script></body></html>"""
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--market", choices=MARKETS, default="jp")
-    ap.add_argument("--window", type=int, default=5, help="フロー集計期間(営業日)")
+    ap.add_argument("--window", type=int, default=5, help="初期表示の集計期間(営業日。5=1週)")
     ap.add_argument("--demo", action="store_true", help="合成データで実行")
     ap.add_argument("--no-holdings", action="store_true", help="保有・監視銘柄の表を出さない")
     ap.add_argument("--notify", action="store_true", help="要約を Slack/Discord Webhook に送る")
     ap.add_argument("--offline", action="store_true", help="plotly.js をHTMLに埋め込む(CDN不要)")
+    ap.add_argument("--shares-store", default="data/shares_history.csv", help="ETF口数の履歴CSV")
     ap.add_argument("-o", "--output", default="market_flow.html")
     a = ap.parse_args()
 
@@ -272,29 +416,36 @@ def main():
     close, vol = load_prices(list(dict.fromkeys([bench, *sectors, *extra])), demo=a.demo)
     if bench not in close.columns or close[bench].isna().all():
         sys.exit("ベンチマークの価格を取得できませんでした")
+    shares = load_shares([t for t in sectors if t in close.columns], close.index,
+                         a.shares_store, demo=a.demo, close=close)
 
-    m = compute(close, vol, sectors, bench, a.window)
+    fl = flows(close, vol, shares, sectors, a.window)
+    mode, top_in, top_out = summary(fl)
     asof = close.index[-1].date()
-    figs = [fig_heatmap(m), fig_flow(m, a.window), fig_sankey(m, a.window),
-            fig_rrg(close, sectors, bench),
-            fig_holdings(close, vol, groups, a.window, m) if groups else None,
-            fig_timeseries(close, vol, sectors)]
+    generated = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).strftime("%Y-%m-%d %H:%M JST")
 
-    top_in = m.sort_values("flow_pct").tail(3)["name"][::-1].tolist()
-    top_out = m.sort_values("flow_pct").head(3)["name"].tolist()
-    head = (f"<h2>セクター資金フロー ({a.market.upper()} / {asof}{' / DEMO' if a.demo else ''})</h2>"
-            f"<p>流入上位: <b>{' / '.join(top_in)}</b>　流出上位: <b>{' / '.join(top_out)}</b></p>"
-            f"<p style='color:#888;font-size:12px'>フローは 値上がり率x売買代金 による近似で、実際のファンド資金流出入ではありません。"
-            f"ベンチマーク: {bench_name}</p>")
-    body = "".join(f.to_html(full_html=False, include_plotlyjs=("inline" if a.offline else "cdn") if i == 0 else False)
-                   for i, f in enumerate(x for x in figs if x is not None))
-    import os
+    payload = build_payload(close, vol, shares, sectors, bench, groups)
+    n_sh = sum(v is not None for v in payload["shares"].values())
+    meta = {"weeks": max(1, round(a.window / 5)), "cur": "JPY" if a.market == "jp" else "USD",
+            "label": f"({a.market.upper()}{' / DEMO' if a.demo else ''})"}
+    plotly_tag = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>'
+    if a.offline:
+        from plotly.offline import get_plotlyjs
+        plotly_tag = f"<script>{get_plotlyjs()}</script>"
+    data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
+    html = (PAGE.replace("__PLOTLY__", plotly_tag)
+            .replace("__SOURCES__", sources_html(cfg, bench_name, asof, generated, a.demo, sectors))
+            .replace("__META__", json.dumps(meta, ensure_ascii=False))
+            .replace("__DATA__", data_json))
     os.makedirs(os.path.dirname(os.path.abspath(a.output)), exist_ok=True)
     with open(a.output, "w", encoding="utf-8") as fh:
-        fh.write(f"<html><head><meta charset='utf-8'><title>Sector Flow</title></head>"
-                 f"<body style='font-family:sans-serif;max-width:1000px;margin:auto'>{head}{body}</body></html>")
+        fh.write(html)
+
+    label = "実フロー" if mode == "actual" else "近似フロー"
     if a.notify:
-        notify(f"[セクター資金フロー {a.market.upper()} {asof}]\n流入: {' / '.join(top_in)}\n流出: {' / '.join(top_out)}")
+        notify(f"[セクター資金フロー {a.market.upper()} {asof} / {label}]\n"
+               f"流入: {' / '.join(top_in)}\n流出: {' / '.join(top_out)}")
+    print(f"口数データ: {n_sh}/{len(payload['shares'])}業種 → {label}")
     print(f"流入上位: {top_in}\n流出上位: {top_out}\n出力: {a.output}")
 
 
