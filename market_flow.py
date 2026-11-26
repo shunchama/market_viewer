@@ -272,7 +272,7 @@ code{background:#eceff3;padding:1px 4px;border-radius:3px}
 <div id="c1" class="chart"></div><p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。</p>
 <div id="c2" class="chart"></div><p class="note" id="n2"></p>
 <div id="c3" class="chart"></div><p class="note">③ 流出額を流入セクターの大きさで按分した模式図です。実際の資金の行き先を示すものではありません。</p>
-<div id="c4" class="chart"></div><p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。反時計回りに循環するとされます。</p>
+<div id="c4" class="chart"></div><p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。時計回り(Improving→Leading→Weakening→Lagging)に循環するとされます。</p>
 <div id="hold" style="display:none"><h3 style="font-weight:400">⑤ 保有・監視銘柄</h3><div id="c5"></div></div>
 <div id="c6" class="chart"></div><p class="note" id="n6"></p>
 __SOURCES__
