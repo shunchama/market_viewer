@@ -183,6 +183,14 @@ table.h th{background:#e8edf3}.up{background:#fde8d8}.dn{background:#dbe9f3}
 .src{margin-top:34px;font-size:13px;line-height:1.7;background:#f7f8fa;padding:10px 16px;border-radius:8px}
 .src summary{cursor:pointer;font-weight:600}.src h4{margin:12px 0 2px}.warn{color:#b5503a}
 code{background:#eceff3;padding:1px 4px;border-radius:3px}
+
+.tw{overflow-x:auto}
+@media (max-width:640px){
+ body{padding:0 8px 40px}h2{font-size:20px}
+ .ctl{position:static;gap:5px}.ctl button,.ctl select,.ctl input{padding:4px 8px;font-size:13px}
+ .sum{font-size:14px}table.h{font-size:12px}table.h th,table.h td{padding:5px 6px}
+ table.h td:nth-child(3){min-width:84px}.src{padding:8px 12px;font-size:12.5px}
+}
 </style></head><body>
 __NAV__
 <h2>為替・金利 <small id="mk"></small></h2>
@@ -209,7 +217,10 @@ const st={end:N-1,weeks:META.weeks},$=id=>document.getElementById(id);
 const pct=(a,b)=>(a==null||b==null||b===0)?null:(a/b-1)*100;
 const fmt=(x,d=1)=>x==null?'-':(x>=0?'+':'')+x.toFixed(d)+'%';
 const yen=v=>(v>=0?'+':'')+v.toFixed(2)+'円';
-const LAY={font:{family:'-apple-system,Hiragino Sans,Noto Sans JP,sans-serif'},margin:{l:140,r:30,t:50,b:50}};
+const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
+const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
+const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const T=s=>({text:s,font:{size:M()?14:17}});
 const COL=[[0,'#3f7fae'],[0.5,'#f7f7f7'],[1,'#f08a3c']];
 function corr(x,y){const n=x.length;if(n<10)return null;const mx=x.reduce((a,b)=>a+b)/n,my=y.reduce((a,b)=>a+b)/n;
  let sxy=0,sx=0,sy=0;for(let i=0;i<n;i++){sxy+=(x[i]-mx)*(y[i]-my);sx+=(x[i]-mx)**2;sy+=(y[i]-my)**2}return(sx&&sy)?sxy/Math.sqrt(sx*sy):null}
@@ -228,15 +239,15 @@ function render(){
  const PN=[1,5,21,63],cols=['1日','1週','1ヶ月','3ヶ月'],z=chg.map(c=>PN.map(n=>pct(F[c.t][e],F[c.t][e-n])));
  const lim=Math.max(1,...z.flat().filter(v=>v!=null).map(Math.abs));
  const hv=chg.map((c,i)=>PN.map((n,k)=>{const y=F[c.t][e-n],x=F[c.t][e];return`<b>${c.name}/円</b>  ${cols[k]}: ${fmt(z[i][k],2)}<br>${x==null?'-':x.toFixed(2)}円(${(x==null||y==null)?'-':yen(x-y)})`}));
- Plotly.react('c1',[{type:'heatmap',z,x:cols,y:chg.map(c=>c.name+'/円'),zmid:0,zmin:-lim,zmax:lim,colorscale:COL,
+ Plotly.react('c1',[{type:'heatmap',z,x:cols,y:chg.map(c=>c.name+'/円'),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?10:11},colorscale:COL,
   text:z.map(r=>r.map(v=>v==null?'':v.toFixed(2)+'%')),texttemplate:'%{text}',hovertext:hv,hovertemplate:'%{hovertext}<extra></extra>'}],
-  {...LAY,title:{text:'① クロス円の変化率(橙=円安 / 青=円高)'},height:100+40*chg.length,yaxis:{autorange:'reversed'}},{displayModeBar:false});
+  {...L(),title:T('① クロス円の変化率(橙=円安 / 青=円高)'),height:100+40*chg.length,yaxis:{autorange:'reversed'}},CFG);
 
  // ② bars (selected window)
  const rv=[...chg].reverse();
  Plotly.react('c2',[{type:'bar',orientation:'h',x:rv.map(x=>x.r),y:rv.map(x=>x.name+'/円'),marker:{color:rv.map(x=>x.r>=0?'#f08a3c':'#3f7fae')},
   customdata:rv.map(x=>[x.last.toFixed(2),yen(x.d)]),hovertemplate:'%{y}<br>%{x:.2f}%<br>%{customdata[0]}円(%{customdata[1]})<extra></extra>'}],
-  {...LAY,title:{text:'② 選択期間の変化率(右=円安 / 左=円高)'},xaxis:{title:{text:'変化率 (%)'}},height:100+36*chg.length},{displayModeBar:false});
+  {...L(),title:T('② 選択期間の変化率(右=円安 / 左=円高)'),xaxis:{title:{text:'変化率 (%)'}},height:100+36*chg.length},CFG);
  $('n2').textContent=`② ${rng}。外貨/円が上昇=円安、下落=円高。`;
 
  // ③ strength lines
@@ -245,7 +256,7 @@ function render(){
   hovertemplate:NM[t]+' %{y:.2f}<extra></extra>'}));
  tr.push({type:'scatter',mode:'lines',name:'円全体(平均)',line:{color:'#111',width:4,dash:'dash'},x:xs,
   y:xs.map((_,k)=>{let s=0,n=0;ok.forEach(t=>{const v=F[t][a+k];if(v!=null&&base(t)){s+=v/base(t)*100;n++}});return n?s/n:null})});
- Plotly.react('c3',tr,{...LAY,title:{text:'③ 円の強弱(期間開始=100・上=円安)'},height:460,margin:{l:60,r:20,t:50,b:50}},{displayModeBar:false});
+ Plotly.react('c3',tr,{...L(),title:T('③ 円の強弱(期間開始=100・上=円安)'),height:M()?580:460,margin:M()?{l:44,r:8,t:44,b:50}:{l:60,r:20,t:50,b:50},legend:M()?{orientation:'h',y:-0.2,font:{size:10}}:{}},CFG);
 
  // ④⑤ rates
  const U=F['USDJPY=X'],rb=$('ratebox');
@@ -256,8 +267,8 @@ function render(){
  const t4=[{type:'scatter',mode:'lines',name:'ドル円(左軸)',x:X,y:U.slice(s0,e+1),line:{color:'#111'},yaxis:'y',connectgaps:true},
   {type:'scatter',mode:'lines',name:'日米10年金利差(右軸)',x:X,y:s10.slice(s0,e+1),line:{color:'#e76f51'},yaxis:'y2',connectgaps:true}];
  if(s2)t4.push({type:'scatter',mode:'lines',name:'日米2年金利差(右軸)',x:X,y:s2.slice(s0,e+1),line:{color:'#2a9d8f',dash:'dot'},yaxis:'y2',connectgaps:true});
- Plotly.react('c4',t4,{...LAY,title:{text:'④ 日米金利差とドル円(直近約1年)'},height:480,margin:{l:60,r:60,t:50,b:70},
-  yaxis:{title:{text:'ドル円(円)'}},yaxis2:{title:{text:'金利差 (%pt)'},overlaying:'y',side:'right',showgrid:false,tickformat:'.2f'},legend:{orientation:'h',y:-0.15}},{displayModeBar:false});
+ Plotly.react('c4',t4,{...L(),title:T('④ 日米金利差とドル円(直近約1年)'),height:M()?520:480,margin:M()?{l:44,r:44,t:44,b:90}:{l:60,r:60,t:50,b:70},
+  yaxis:{title:{text:'ドル円(円)'}},yaxis2:{title:{text:'金利差 (%pt)'},overlaying:'y',side:'right',showgrid:false,tickformat:'.2f'},legend:{orientation:'h',y:M()?-0.22:-0.15,font:{size:M()?10:12}}},CFG);
  const d10=(s10[e]!=null&&s10[a]!=null)?(s10[e]-s10[a])*100:null,xa=[],ya=[];
  for(let i=Math.max(1,e-59);i<=e;i++)if(s10[i]!=null&&s10[i-1]!=null&&U[i]!=null&&U[i-1]!=null){xa.push(s10[i]-s10[i-1]);ya.push(U[i]-U[i-1])}
  const r=corr(xa,ya);
@@ -267,8 +278,8 @@ function render(){
  Object.keys(R).forEach(k=>rows.push([META.rn[k]||k,R[k][e],bp(R[k],e,a),bp(R[k],e,e-1)]));
  if(s2)rows.push(['日米2年金利差',s2[e],bp(s2,e,a),bp(s2,e,e-1)]);
  rows.push(['日米10年金利差',s10[e],bp(s10,e,a),bp(s10,e,e-1)]);
- $('c5').innerHTML='<table class="h"><tr><th>項目</th><th>水準(%)</th><th>期間の変化</th><th>1日の変化</th></tr>'+
-  rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]==null?'-':r[1].toFixed(3)}</td><td class="${cls(r[2])}">${bt(r[2])}</td><td class="${cls(r[3])}">${bt(r[3])}</td></tr>`).join('')+'</table>';
+ $('c5').innerHTML='<div class="tw"><table class="h"><tr><th>項目</th><th>水準(%)</th><th>期間の変化</th><th>1日の変化</th></tr>'+
+  rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]==null?'-':r[1].toFixed(3)}</td><td class="${cls(r[2])}">${bt(r[2])}</td><td class="${cls(r[3])}">${bt(r[3])}</td></tr>`).join('')+'</table></div>';
 }
 
 $('mk').textContent=META.label;
@@ -280,6 +291,7 @@ $('end').onchange=ev=>{let i=N-1;while(i>MIN_END&&D.dates[i]>ev.target.value)i--
 $('prev').onclick=()=>{st.end=Math.max(MIN_END,st.end-5);render()};
 $('next').onclick=()=>{st.end=Math.min(N-1,st.end+5);render()};
 $('latest').onclick=()=>{st.end=N-1;render()};
+let wasM=M();addEventListener('resize',()=>{if(M()!==wasM){wasM=M();render()}});
 render();
 </script></body></html>"""
 

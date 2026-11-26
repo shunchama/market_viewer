@@ -308,6 +308,14 @@ table.h th,table.mini th{background:#e8edf3}.up{background:#d8f3dc}.dn{backgroun
 .src{margin-top:34px;font-size:13px;line-height:1.7;background:#f7f8fa;padding:10px 16px;border-radius:8px}
 .src summary{cursor:pointer;font-weight:600}.src h4{margin:12px 0 2px}.warn{color:#b5503a}
 code{background:#eceff3;padding:1px 4px;border-radius:3px}
+
+.tw{overflow-x:auto}
+@media (max-width:640px){
+ body{padding:0 8px 40px}h2{font-size:20px}
+ .ctl{position:static;gap:5px}.ctl button,.ctl select,.ctl input{padding:4px 8px;font-size:13px}
+ .sum{font-size:14px}table.h{font-size:12px}table.h th,table.h td{padding:5px 6px}
+ table.h td:nth-child(3){min-width:84px}.src{padding:8px 12px;font-size:12.5px}
+}
 </style></head><body>
 __NAV__
 <h2>セクター資金フロー <small id="mk"></small></h2>
@@ -338,7 +346,10 @@ const $=id=>document.getElementById(id);
 const pct=(a,b)=>(a==null||b==null||b===0)?null:(a/b-1)*100;
 const fmt=(x,d=1)=>x==null?'-':(x>=0?'+':'')+x.toFixed(d)+'%';
 const oku=x=>(x/1e8).toFixed(1)+(META.cur==='JPY'?'億円':'億ドル');
-const LAY={font:{family:'-apple-system,Hiragino Sans,Noto Sans JP,sans-serif'},margin:{l:140,r:30,t:50,b:50}};
+const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
+const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
+const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const T=s=>({text:s,font:{size:M()?14:17}});
 
 function proxyFlow(t,a,b){let s=0;for(let i=a+1;i<=b;i++){const c=C[t][i],p=C[t][i-1],v=V[t][i];if(c==null||p==null||v==null)continue;s+=(c/p-1)*c*v}return s}
 function actualFlow(t,a,b){const s=S[t];if(!s)return null;let x=0,n=0;for(let i=a+1;i<=b;i++){const c=C[t][i];if(s[i]==null||s[i-1]==null||c==null)continue;x+=(s[i]-s[i-1])*c;n++}return n?x:null}
@@ -377,9 +388,9 @@ function render(){
  const hv=h.map((row,i)=>PN.map((n,k)=>{const lines=(D.reps[row.t]||[]).map(r=>{const c=D.rclose[r.t];if(!c)return null;const x=c[e],y=c[e-n];
    return(x==null||y==null||!y)?null:`${r.name}  ${fmt((x/y-1)*100,2)}(${money(x-y)})`}).filter(Boolean);
   return`<b>${row.name}</b>  ${cols[k]}: ${fmt(z[i][k],2)}`+(lines.length?'<br>代表銘柄:<br>'+lines.join('<br>'):'')}));
- Plotly.react('c1',[{type:'heatmap',z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,colorscale:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
+ Plotly.react('c1',[{type:'heatmap',z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?9:11},colorscale:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
   text:z.map(rw=>rw.map(v=>v==null?'':v.toFixed(1)+'%')),texttemplate:'%{text}',hovertext:hv,hovertemplate:'%{hovertext}<extra></extra>'}],
-  {...LAY,title:{text:'① セクター別騰落率'},height:80+28*h.length,yaxis:{autorange:'reversed'}},{displayModeBar:false});
+  {...L(),title:T('① セクター別騰落率'),height:80+28*h.length,yaxis:{autorange:'reversed'}},CFG);
 
  // ② flow bars
  const f=[...srt].reverse();
@@ -387,7 +398,7 @@ function render(){
   marker:{color:f.map(r=>r.pct>=0?'#2a9d8f':'#e76f51')},
   customdata:f.map(r=>[oku(r.flow),r.tr==null?'-':r.tr.toFixed(2)]),
   hovertemplate:'%{y}<br>フロー %{x:.1f}%(%{customdata[0]})<br>売買代金 平常比 x%{customdata[1]}<extra></extra>'}],
-  {...LAY,title:{text:'② 資金フロー(右=流入 / 左=流出)'},xaxis:{title:{text:'全セクターの|フロー|合計に対する比率 (%)'}},height:80+28*f.length},{displayModeBar:false});
+  {...L(),title:T('② 資金フロー(右=流入 / 左=流出)'),xaxis:{title:{text:M()?'フロー比率 (%)':'全セクターの|フロー|合計に対する比率 (%)'}},height:80+28*f.length},CFG);
  $('n2').textContent=`② ${unit}。${rng}。`+(mode==='actual'?'設定・解約の推定のため、現物拠出など実際の資金移動と差が出ます。':'実際のファンド資金流出入ではありません。');
 
  // ③ sankey
@@ -397,8 +408,8 @@ function render(){
   Plotly.react('c3',[{type:'sankey',node:{label:[...outs.map(r=>r.name+'(流出)'),...ins.map(r=>r.name+'(流入)')],
    color:[...outs.map(()=>'#e76f51'),...ins.map(()=>'#2a9d8f')],pad:12},
    link:{source:src,target:dst,value:val,color:val.map(()=> 'rgba(231,111,81,0.25)')}}],
-   {...LAY,title:{text:'③ 資金の移動イメージ(流出 → 流入)'},height:520,margin:{l:20,r:20,t:50,b:20}},{displayModeBar:false});
- }else Plotly.react('c3',[],{...LAY,title:{text:'③ 資金の移動イメージ(流出または流入のセクターがありません)'},height:120});
+   {...L(),title:T('③ 資金の移動イメージ(流出 → 流入)'),height:M()?760:520,margin:{l:6,r:6,t:44,b:10}},CFG);
+ }else Plotly.react('c3',[],{...L(),title:T('③ 資金の移動イメージ(流出または流入のセクターがありません)'),height:120});
 
  // ④ RRG
  const rs=(t,i)=>C[t][i]/C[B][i],rsn=(t,i)=>{if(i<59)return null;let s=0;for(let k=i-59;k<=i;k++)s+=rs(t,k);return rs(t,i)/(s/60)*100},
@@ -406,19 +417,19 @@ function render(){
  const tr=secs.map(x=>{const xs=[],ys=[];for(let i=e-7;i<=e;i++){const p=rsn(x.t,i),q=mom(x.t,i);if(p!=null&&q!=null){xs.push(p);ys.push(q)}}
   return{type:'scatter',mode:'lines+markers',name:x.name,x:xs,y:ys,marker:{size:xs.map((_,k)=>k===xs.length-1?11:4)},
    hovertemplate:x.name+'<br>相対強度 %{x:.1f}<br>モメンタム %{y:.1f}<extra></extra>'}});
- const q=(x,y,t)=>({xref:'paper',yref:'paper',x,y,text:t,showarrow:false,xanchor:x?'right':'left',yanchor:y?'top':'bottom',font:{size:13,color:'gray'}});
- Plotly.react('c4',tr,{...LAY,title:{text:'④ セクターローテーション(RRG)'},height:620,margin:{l:60,r:20,t:50,b:50},
+ const q=(x,y,t)=>({xref:'paper',yref:'paper',x,y,text:M()?t.split(' ')[0]:t,showarrow:false,xanchor:x?'right':'left',yanchor:y?'top':'bottom',font:{size:M()?10:13,color:'gray'}});
+ Plotly.react('c4',tr,{...L(),title:T('④ セクターローテーション(RRG)'),height:M()?660:620,margin:M()?{l:44,r:8,t:44,b:50}:{l:60,r:20,t:50,b:50},legend:M()?{orientation:'h',y:-0.2,font:{size:10}}:{},
   xaxis:{title:{text:'ベンチマーク比 相対強度'}},yaxis:{title:{text:'相対強度のモメンタム'}},
   shapes:[{type:'line',xref:'paper',x0:0,x1:1,yref:'y',y0:100,y1:100,line:{dash:'dot'}},{type:'line',yref:'paper',y0:0,y1:1,xref:'x',x0:100,x1:100,line:{dash:'dot'}}],
-  annotations:[q(1,1,'Leading 先導'),q(0,1,'Improving 改善'),q(0,0,'Lagging 出遅れ'),q(1,0,'Weakening 失速')]},{displayModeBar:false});
+  annotations:[q(1,1,'Leading 先導'),q(0,1,'Improving 改善'),q(0,0,'Lagging 出遅れ'),q(1,0,'Weakening 失速')]},CFG);
 
  // ⑤ holdings
  if(D.holdings.length){$('hold').style.display='';
   const cls=v=>v==null?'':(v>=0?'up':'dn'),byName=Object.fromEntries(rows.map(r=>[r.name,r]));
-  $('c5').innerHTML='<table class="h"><tr><th>区分</th><th>銘柄</th><th>セクター(フロー%)</th><th>1日</th><th>1週</th><th>1ヶ月</th></tr>'+
+  $('c5').innerHTML='<div class="tw"><table class="h"><tr><th>区分</th><th>銘柄</th><th>セクター(フロー%)</th><th>1日</th><th>1週</th><th>1ヶ月</th></tr>'+
    D.holdings.map(x=>{const c=C[x.t],r=byName[x.sector],sec=r?`${x.sector} (${fmt(r.pct)})`:x.sector,
     p=[pct(c[e],c[e-1]),pct(c[e],c[e-5]),pct(c[e],c[e-21])];
-    return`<tr><td>${x.g}</td><td>${x.t}</td><td>${sec}</td>`+p.map(v=>`<td class="${cls(v)}">${fmt(v,2)}</td>`).join('')+'</tr>'}).join('')+'</table>'}
+    return`<tr><td>${x.g}</td><td>${x.t}</td><td>${sec}</td>`+p.map(v=>`<td class="${cls(v)}">${fmt(v,2)}</td>`).join('')+'</tr>'}).join('')+'</table></div>'}
 
  // ⑥ cumulative
  const s0=Math.max(1,e-59),ser=secs.map(x=>{let c=0;const ys=[];for(let i=s0;i<=e;i++){const d=dayFlow(x.t,i,mode);c+=d||0;ys.push(c)}
@@ -427,7 +438,7 @@ function render(){
  ser.sort((p,q)=>q.ys[q.ys.length-1]-p.ys[p.ys.length-1]);
  Plotly.react('c6',ser.map(o=>({type:'scatter',mode:'lines',name:o.x.name,x:D.dates.slice(s0,e+1),y:o.ys.map(v=>v/sc*100),
   hovertemplate:o.x.name+' %{y:.1f}%<extra></extra>'})),
-  {...LAY,title:{text:'⑥ 累積フロー推移(直近60営業日)'},yaxis:{title:{text:'累積フロー (全体の|フロー|に対する %)'}},height:520,margin:{l:60,r:20,t:50,b:50}},{displayModeBar:false});
+  {...L(),title:T('⑥ 累積フロー推移(直近60営業日)'),yaxis:{title:{text:M()?'累積フロー (%)':'累積フロー (全体の|フロー|に対する %)'}},height:M()?600:520,margin:M()?{l:44,r:8,t:44,b:50}:{l:60,r:20,t:50,b:50},legend:M()?{orientation:'h',y:-0.2,font:{size:10}}:{}},CFG);
  $('n6').textContent=`⑥ ${unit}。上昇が続くセクターは資金流入が継続しています。`;
 }
 
@@ -442,6 +453,7 @@ $('end').onchange=ev=>{let i=D.dates.length-1;while(i>MIN_END&&D.dates[i]>ev.tar
 $('prev').onclick=()=>{st.end=Math.max(MIN_END,st.end-5);render()};
 $('next').onclick=()=>{st.end=Math.min(N-1,st.end+5);render()};
 $('latest').onclick=()=>{st.end=N-1;render()};
+let wasM=M();addEventListener('resize',()=>{if(M()!==wasM){wasM=M();render()}});
 render();
 </script></body></html>"""
 
