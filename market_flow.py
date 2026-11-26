@@ -83,9 +83,24 @@ def load_prices(tickers, demo=False):
                            index=idx, columns=tickers)
         return close, vol
     import yfinance as yf
-    df = yf.download(list(tickers), period="1y", auto_adjust=True, progress=False)
-    close = df["Close"].dropna(how="all").ffill()
-    vol = df["Volume"].reindex(close.index).fillna(0)
+    import time
+    # threads=False: 並列取得だとキャッシュDBが "database is locked" になることがある
+    df = yf.download(list(tickers), period="1y", auto_adjust=True, progress=False, threads=False)
+    close = df["Close"].copy()
+    vol = df["Volume"].copy()
+    # 取得に失敗した銘柄は1本ずつリトライ
+    for t in tickers:
+        for attempt in range(3):
+            if t in close.columns and close[t].notna().any():
+                break
+            time.sleep(1 + attempt)
+            one = yf.download(t, period="1y", auto_adjust=True, progress=False, threads=False)
+            if not one.empty:
+                c, v = one["Close"], one["Volume"]
+                close[t] = (c.iloc[:, 0] if hasattr(c, "columns") else c).reindex(close.index)
+                vol[t] = (v.iloc[:, 0] if hasattr(v, "columns") else v).reindex(close.index)
+    close = close.dropna(how="all").ffill()
+    vol = vol.reindex(close.index).fillna(0)
     missing = [t for t in tickers if t not in close.columns or close[t].isna().all()]
     if missing:
         print(f"[warn] データ取得失敗: {missing}")
@@ -273,6 +288,8 @@ def main():
             f"ベンチマーク: {bench_name}</p>")
     body = "".join(f.to_html(full_html=False, include_plotlyjs=("inline" if a.offline else "cdn") if i == 0 else False)
                    for i, f in enumerate(x for x in figs if x is not None))
+    import os
+    os.makedirs(os.path.dirname(os.path.abspath(a.output)), exist_ok=True)
     with open(a.output, "w", encoding="utf-8") as fh:
         fh.write(f"<html><head><meta charset='utf-8'><title>Sector Flow</title></head>"
                  f"<body style='font-family:sans-serif;max-width:1000px;margin:auto'>{head}{body}</body></html>")
