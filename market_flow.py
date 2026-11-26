@@ -99,6 +99,44 @@ REPS = {
 }
 
 
+LAST_VALID = {}   # ティッカー -> 価格が最後に取得できた日(ffill 前の実データの日付)
+SHARES_LAST = {}  # ティッカー -> 口数の最終観測日
+
+
+def asof_html(rows, ref):
+    """データごとの基準日の表。rows = [(名前, 日付 or None, 備考)]。ref(ページの最新日)より古いものを強調する。"""
+    ref = pd.Timestamp(ref).normalize()
+    trs, short = [], []
+    for label, d, note in rows:
+        if d is None or pd.isna(d):
+            trs.append(f"<tr><td>{label}</td><td class='stale'>データなし</td><td>{note}</td></tr>")
+            short.append(f"{label.split('(')[0]} なし")
+            continue
+        d = pd.Timestamp(d).normalize()
+        lag = (ref - d).days
+        late = f" <span class='stale'>({lag}日前)</span>" if lag > 0 else ""
+        cls = " class='stale'" if lag > 3 else ""
+        trs.append(f"<tr><td>{label}</td><td{cls}>{d:%Y-%m-%d}{late}</td><td>{note}</td></tr>")
+        short.append(f"{label.split('(')[0]} {d:%m/%d}")
+    return ("<style>.asof{font-size:13px;margin:4px 0 8px}.asof summary{cursor:pointer;color:#555}"
+            ".asof table{border-collapse:collapse;margin-top:6px;width:100%}.asof td,.asof th{padding:4px 8px;"
+            "border-bottom:1px solid #eee;text-align:left}.asof th{background:#eef1f5}.stale{color:#b5503a;font-weight:600}</style>"
+            f"<details class='asof'><summary>データ基準日: {' ／ '.join(short)}(タップで詳細)</summary>"
+            "<table><tr><th>データ</th><th>最新日</th><th>備考</th></tr>" + "".join(trs) + "</table></details>")
+
+
+def last_span(tickers):
+    """複数ティッカーの最終取得日の (最新, 備考)。遅れている銘柄があれば備考に挙げる。"""
+    ds = {t: LAST_VALID.get(t) for t in tickers if LAST_VALID.get(t) is not None}
+    if not ds:
+        return None, ""
+    mx = max(ds.values())
+    late = [t for t, d in ds.items() if pd.Timestamp(d).normalize() < pd.Timestamp(mx).normalize()]
+    note = f"全{len(ds)}本が同日" if not late else f"{len(late)}本が遅れ: " + ", ".join(
+        f"{t}({pd.Timestamp(ds[t]):%m/%d})" for t in late[:4]) + ("…" if len(late) > 4 else "")
+    return mx, note
+
+
 def nav_html(active):
     """ページ間ナビ(index.html=日本株, us.html=米国株, fx.html=為替)。公開フォルダ内の相対リンク。"""
     items = (("index.html", "株式(日本)", "jp"), ("us.html", "株式(米国)", "us"), ("fx.html", "為替", "fx"), ("breadth.html", "騰落数", "breadth"))
@@ -137,6 +175,7 @@ def load_prices(tickers, demo=False):
         vol = pd.DataFrame(rng.lognormal(12, 0.3, (len(idx), n)) * (1 + 3 * np.abs(ret)),
                            index=idx, columns=tickers)
         close.attrs["drift"] = dict(zip(tickers, drift))
+        LAST_VALID.update({t: idx[-1] for t in tickers})
         return close, vol
     import time
     import yfinance as yf
@@ -155,6 +194,8 @@ def load_prices(tickers, demo=False):
                 c, v = one["Close"], one["Volume"]
                 close[t] = (c.iloc[:, 0] if hasattr(c, "columns") else c).reindex(close.index)
                 vol[t] = (v.iloc[:, 0] if hasattr(v, "columns") else v).reindex(close.index)
+    for t in close.columns:  # 補完(ffill)する前に、実際に値があった最終日を記録
+        LAST_VALID[t] = close[t].last_valid_index()
     close = close.dropna(how="all").ffill()
     vol = vol.reindex(close.index).fillna(0)
     missing = [t for t in tickers if t not in close.columns or close[t].isna().all()]
@@ -178,6 +219,7 @@ def load_shares(tickers, index, store_path, demo=False, close=None):
                 continue
             step = rng.normal(0, 0.002, len(index)) + drift.get(t, 0) * 0.5
             out[t] = 1e6 * np.exp(step.cumsum())
+            SHARES_LAST[t] = index[-1]
         return out
 
     import yfinance as yf
@@ -212,6 +254,7 @@ def load_shares(tickers, index, store_path, demo=False, close=None):
         s = store[store["ticker"] == t].set_index("date")["shares"].astype(float)
         if s.nunique() > 1:  # 一度も変化していない口数は「データ無し」とみなす
             out[t] = s.reindex(index.union(s.index)).ffill().reindex(index)
+            SHARES_LAST[t] = s.index.max()
     return out
 
 
@@ -320,6 +363,7 @@ code{background:#eceff3;padding:1px 4px;border-radius:3px}
 __NAV__
 <h2>セクター資金フロー <small id="mk"></small></h2>
 <p class="sub" id="asof"></p>
+__ASOF__
 <div class="ctl">
  <label>期間</label>
  <span id="presets"></span>
@@ -497,6 +541,18 @@ def main():
 
     payload = build_payload(close, vol, shares, sectors, bench, groups, reps)
     n_sh = sum(v is not None for v in payload["shares"].values())
+    sec_t = [t for t in sectors if t in close.columns]
+    d_etf, n_etf = last_span(sec_t)
+    d_rep, n_rep = last_span([t for lst_ in reps.values() for t, _ in lst_])
+    sh_d = max(SHARES_LAST.values()) if SHARES_LAST else None
+    rows = [("株価・出来高(セクターETF)", d_etf, n_etf),
+            (f"ベンチマーク({bench})", LAST_VALID.get(bench), ""),
+            ("代表銘柄(ホバー表示)", d_rep, n_rep),
+            ("ETF発行口数", sh_d, f"口数が取れたのは {n_sh}/{len(sec_t)} 業種(最終観測日の最新)" if sh_d is not None
+             else "口数データなし → 近似フローで表示")]
+    if groups:
+        d_h, n_h = last_span(extra)
+        rows.append(("保有・監視銘柄", d_h, n_h))
     meta = {"weeks": max(1, round(a.window / 5)), "cur": "JPY" if a.market == "jp" else "USD",
             "label": f"({a.market.upper()}{' / DEMO' if a.demo else ''})",
             "generated": generated}
@@ -506,6 +562,7 @@ def main():
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
     data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
     html = (PAGE.replace("__PLOTLY__", plotly_tag)
+            .replace("__ASOF__", asof_html(rows, d_etf or asof))
             .replace("__NAV__", nav_html(a.market) if a.nav else "")
             .replace("__SOURCES__", sources_html(cfg, bench_name, asof, generated, a.demo, sectors))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))

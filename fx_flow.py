@@ -20,7 +20,10 @@ import sys
 import numpy as np
 import pandas as pd
 
-from market_flow import lst, load_prices, nav_html, notify
+import market_flow as mf
+from market_flow import asof_html, last_span, lst, load_prices, nav_html, notify
+
+RATE_LAST = {}   # 金利キー -> (最終日, 出典)
 
 FX_PAIRS = {
     "USDJPY=X": "米ドル", "EURJPY=X": "ユーロ", "GBPJPY=X": "英ポンド", "AUDJPY=X": "豪ドル",
@@ -116,6 +119,7 @@ def load_fx(demo=False):
         rng = np.random.default_rng(23)
         idx = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=260)
         base = dict(zip(FX_PAIRS, (150, 163, 190, 98, 90, 108, 170)))
+        mf.LAST_VALID.update({t: idx[-1] for t in FX_PAIRS})
         yen = np.cumsum(rng.normal(0.0004, 0.004, len(idx)))  # 全通貨に共通する円の動き
         return pd.DataFrame({t: base[t] * np.exp(yen + np.cumsum(rng.normal(0, 0.003, len(idx))))
                              for t in FX_PAIRS}, index=idx)
@@ -129,6 +133,7 @@ def load_rates(index, demo=False):
     if demo:
         rng = np.random.default_rng(31)
         lvl = {"US2": 3.8, "US10": 4.2, "JP2": 0.9, "JP10": 1.6}
+        RATE_LAST.update({k: (index[-1], "合成データ") for k in cols})
         return pd.DataFrame({k: lvl[k] + np.cumsum(rng.normal(0, 0.02, len(index))) for k in cols}, index=index)
     out = {}
     try:  # 米財務省の公式CSV(日次)。去年+今年。
@@ -138,6 +143,7 @@ def load_rates(index, demo=False):
             ser = _clean(pd.concat([p[k] for p in parts if k in p])) if any(k in p for p in parts) else None
             if ser is not None and len(ser):
                 out[k] = ser
+                RATE_LAST[k] = (ser.index[-1], "米財務省")
     except Exception as e:  # noqa: BLE001
         print(f"[warn] 米財務省CSV 取得失敗: {type(e).__name__}: {e}")
     for key, sid in (("US2", "DGS2"), ("US10", "DGS10")):  # 取れなかった分だけ FRED で補う
@@ -145,6 +151,7 @@ def load_rates(index, demo=False):
             continue
         try:
             out[key] = parse_fred(_http(FRED_URL.format(sid), timeout=20, tries=1))
+            RATE_LAST[key] = (out[key].index[-1], "FRED")
         except Exception as e:  # noqa: BLE001
             print(f"[warn] FRED {sid} 取得失敗: {type(e).__name__}: {e}")
     try:
@@ -160,6 +167,7 @@ def load_rates(index, demo=False):
         for k in ("JP2", "JP10"):
             if out[k] is not None and len(out[k]):
                 print(f"[info] 日本国債 {k}: {len(out[k])}行, 最新 {out[k].index[-1].date()}")
+                RATE_LAST[k] = (out[k].index[-1], "財務省")
     except Exception as e:  # noqa: BLE001
         print(f"[warn] 財務省 国債金利 取得失敗: {type(e).__name__}: {e}")
     res = pd.DataFrame(np.nan, index=index, columns=cols)
@@ -228,6 +236,7 @@ code{background:#eceff3;padding:1px 4px;border-radius:3px}
 __NAV__
 <h2>為替・金利 <small id="mk"></small></h2>
 <p class="sub" id="asof"></p>
+__ASOF__
 <div class="ctl">
  <label>期間</label><span id="presets"></span>
  <input type="number" id="wk" min="1" max="26" title="任意の週数"><label>週</label>
@@ -361,7 +370,13 @@ def main():
         from plotly.offline import get_plotlyjs
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
     data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
+    d_fx, n_fx = last_span(list(fx.columns))
+    rows = [("為替(クロス円)", d_fx, n_fx)]
+    for k, nm in RATE_NAMES.items():
+        d, src = RATE_LAST.get(k, (None, ""))
+        rows.append((nm, d, f"出典: {src}" if src else "取得できず"))
     html = (PAGE.replace("__PLOTLY__", plotly_tag)
+            .replace("__ASOF__", asof_html(rows, d_fx or asof))
             .replace("__NAV__", nav_html("fx") if a.nav else "")
             .replace("__SOURCES__", sources_html(asof, generated, a.demo))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))

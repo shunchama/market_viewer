@@ -23,7 +23,7 @@ import time
 import numpy as np
 import pandas as pd
 
-from market_flow import nav_html, notify
+from market_flow import asof_html, nav_html, notify
 
 JPX_LIST_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
 MARKETS = (("prime", "プライム", "プライム"), ("standard", "スタンダード", "スタンダード"),
@@ -60,10 +60,21 @@ def parse_jpx_list(raw):
     return out
 
 
+def jpx_list_date(raw):
+    """銘柄一覧ファイル内の『日付』列(例: 20261125)。読めなければ None。"""
+    try:
+        df = pd.read_excel(io.BytesIO(raw))
+        col = next(c for c in df.columns if "日付" in str(c))
+        return pd.to_datetime(str(int(df[col].dropna().iloc[0])), format="%Y%m%d")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def load_universe(list_file=None, demo=False, limit=None):
+    """({市場: [ティッカー]}, 一覧ファイルの日付) を返す。"""
     if demo:
         return {"prime": [f"P{i:04d}.T" for i in range(180)], "standard": [f"S{i:04d}.T" for i in range(120)],
-                "growth": [f"G{i:04d}.T" for i in range(80)]}
+                "growth": [f"G{i:04d}.T" for i in range(80)]}, pd.Timestamp.today().normalize()
     if list_file:
         raw = open(list_file, "rb").read()
     else:
@@ -73,7 +84,7 @@ def load_universe(list_file=None, demo=False, limit=None):
     uni = parse_jpx_list(raw)
     if limit:
         uni = {k: v[: max(1, limit // 3)] for k, v in uni.items()}
-    return uni
+    return uni, jpx_list_date(raw)
 
 
 # ───────────────────────── 株価取得 ─────────────────────────
@@ -202,6 +213,7 @@ code{background:#eceff3;padding:1px 4px;border-radius:3px}
 __NAV__
 <h2>市場ごとの値上がり・値下がり <small id="mk"></small></h2>
 <p class="sub" id="asof"></p>
+__ASOF__
 <div class="ctl">
  <label>期間</label><span id="presets"></span>
  <input type="number" id="wk" min="1" max="26" title="任意の週数"><label>週</label>
@@ -291,7 +303,7 @@ def main():
     ap.add_argument("-o", "--output", default="breadth.html")
     a = ap.parse_args()
 
-    universe = load_universe(a.list_file, a.demo, a.limit)
+    universe, list_date = load_universe(a.list_file, a.demo, a.limit)
     total = {k: len(v) for k, v in universe.items()}
     print(f"[info] 銘柄一覧: {total}")
     tickers = [t for v in universe.values() for t in v]
@@ -313,7 +325,13 @@ def main():
         from plotly.offline import get_plotlyjs
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
     cover = {**used, "total": total}
+    used_t = [t for v in universe.values() for t in v if t in close.columns]
+    lv = close[used_t].apply(lambda x: x.last_valid_index())
+    stale_n = int((lv < close.index[-1]).sum())
+    rows = [("株価(上場全銘柄)", close.index[-1], f"{len(used_t):,}銘柄を集計。うち{stale_n:,}銘柄は最新日の値なし(売買不成立・取得漏れなど)"),
+            ("銘柄一覧(JPX)", list_date, "上場銘柄一覧ファイルの日付" if list_date is not None else "日付を読み取れず")]
     html = (PAGE.replace("__PLOTLY__", plotly_tag)
+            .replace("__ASOF__", asof_html(rows, close.index[-1]))
             .replace("__NAV__", nav_html("breadth") if a.nav else "")
             .replace("__SOURCES__", sources_html(asof, generated, a.demo, cover))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))
