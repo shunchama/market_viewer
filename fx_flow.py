@@ -29,7 +29,8 @@ FX_PAIRS = {
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
 TREASURY_URL = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
                 "daily-treasury-rates.csv/{y}/all?type=daily_treasury_yield_curve&field_tdr_date_value={y}&page&_format=csv")
-MOF_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"
+MOF_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"   # 全期間(月次更新で、最新の約1か月分が欠ける)
+MOF_CUR_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/jgbcm.csv"   # 当月分(日次更新)
 RATE_NAMES = {"US2": "米国債2年", "US10": "米国債10年", "JP2": "日本国債2年", "JP10": "日本国債10年"}
 
 
@@ -148,6 +149,13 @@ def load_rates(index, demo=False):
             print(f"[warn] FRED {sid} 取得失敗: {type(e).__name__}: {e}")
     try:
         jp = parse_mof(_http(MOF_URL))
+        try:  # 当月分で最新日まで補う(全期間ファイルは月次更新のため)
+            cur = parse_mof(_http(MOF_CUR_URL, timeout=30, tries=2))
+            for k, ser in cur.items():
+                if k in jp and len(ser):
+                    jp[k] = _clean(pd.concat([jp[k], ser]))
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 財務省 当月分CSV 取得失敗(最新の約1か月分が欠けます): {type(e).__name__}: {e}")
         out["JP2"], out["JP10"] = jp.get("2年"), jp.get("10年")
         for k in ("JP2", "JP10"):
             if out[k] is not None and len(out[k]):
@@ -297,7 +305,9 @@ function render(){
  const d10=(s10[e]!=null&&s10[a]!=null)?(s10[e]-s10[a])*100:null,xa=[],ya=[];
  for(let i=Math.max(1,e-59);i<=e;i++)if(s10[i]!=null&&s10[i-1]!=null&&U[i]!=null&&U[i-1]!=null){xa.push(s10[i]-s10[i-1]);ya.push(U[i]-U[i-1])}
  const r=corr(xa,ya);
- $('n4').textContent=`④ 日米10年金利差 ${s10[e]==null?'-':s10[e].toFixed(2)+'%pt'}(${rng}で${d10==null?'-':(d10>=0?'+':'')+d10.toFixed(0)}bp)。金利差の拡大はドル高・円安要因とされますが、常に連動するわけではありません。直近60日の日次変化の相関: ${r==null?'-':r.toFixed(2)}`;
+ let j=e;while(j>0&&s10[j]==null)j--;
+ const cur10=s10[j]==null?'-':s10[j].toFixed(2)+'%pt'+(j<e?`(${D.dates[j]}時点・日本の金利が未公表)`:'');
+ $('n4').textContent=`④ 日米10年金利差 ${cur10}(${rng}で${d10==null?'-':(d10>=0?'+':'')+d10.toFixed(0)}bp)。金利差の拡大はドル高・円安要因とされますが、常に連動するわけではありません。直近60日の日次変化の相関: ${r==null?'-':r.toFixed(2)}`;
  const bp=(s,i,j)=>(s&&s[i]!=null&&s[j]!=null)?(s[i]-s[j])*100:null,bt=v=>v==null?'-':(v>=0?'+':'')+v.toFixed(0)+'bp',
   cls=v=>v==null?'':(v>=0?'up':'dn'),rows=[];
  Object.keys(R).forEach(k=>rows.push([META.rn[k]||k,R[k][e],bp(R[k],e,a),bp(R[k],e,e-1)]));
@@ -364,7 +374,8 @@ def main():
     avg = ch.mean()
     line = f"円: 主要{len(ch)}通貨に対し平均{abs(avg):.2f}%{'円安' if avg >= 0 else '円高'}(直近{a.window}営業日)"
     if rates[["US10", "JP10"]].notna().all(axis=1).any():
-        line += f" / 日米10年金利差 {(rates['US10'] - rates['JP10']).dropna().iloc[-1]:.2f}%pt"
+        sp = (rates["US10"] - rates["JP10"]).dropna()
+        line += f" / 日米10年金利差 {sp.iloc[-1]:.2f}%pt({sp.index[-1].date()}時点)"
     else:
         print("[warn] 日米金利が取得できなかったため、金利差のセクションは非表示になります")
     if a.notify:
