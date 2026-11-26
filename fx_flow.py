@@ -27,14 +27,32 @@ FX_PAIRS = {
     "NZDJPY=X": "NZドル", "CADJPY=X": "カナダドル", "CHFJPY=X": "スイスフラン",
 }
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
+TREASURY_URL = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+                "daily-treasury-rates.csv/{y}/all?type=daily_treasury_yield_curve&field_tdr_date_value={y}&page&_format=csv")
 MOF_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"
 RATE_NAMES = {"US2": "米国債2年", "US10": "米国債10年", "JP2": "日本国債2年", "JP10": "日本国債10年"}
 
 
-def _http(url, timeout=40):
+def _http(url, timeout=60, tries=3):
+    """タイムアウトしやすい先があるため、間隔を空けて数回リトライする。"""
+    import time
     import urllib.request
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 market-flow"})
-    return urllib.request.urlopen(req, timeout=timeout).read()
+    last = None
+    for i in range(tries):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout).read()
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(2 * (i + 1))
+    raise last
+
+
+def _clean(s):
+    """日付が不正・重複した行を除き、昇順の Series にする。"""
+    s = s[s.index.notna()]
+    s = s[~s.index.duplicated(keep="last")]
+    return s.dropna().sort_index()
 
 
 def parse_fred(raw):
@@ -42,7 +60,15 @@ def parse_fred(raw):
     df = pd.read_csv(io.BytesIO(raw))
     d = pd.to_datetime(df.iloc[:, 0], errors="coerce")
     v = pd.to_numeric(df.iloc[:, 1], errors="coerce")
-    return pd.Series(v.values, index=d).dropna().sort_index()
+    return _clean(pd.Series(v.values, index=d))
+
+
+def parse_treasury(raw):
+    """米財務省の日次イールドカーブCSV(Date, ..., '2 Yr', ..., '10 Yr')から2年・10年を取り出す。"""
+    df = pd.read_csv(io.BytesIO(raw))
+    d = pd.to_datetime(df["Date"], errors="coerce")
+    return {k: _clean(pd.Series(pd.to_numeric(df[c], errors="coerce").values, index=d))
+            for c, k in (("2 Yr", "US2"), ("10 Yr", "US10")) if c in df.columns}
 
 
 def parse_mof(raw, cols=("2年", "10年")):
@@ -56,7 +82,9 @@ def parse_mof(raw, cols=("2年", "10年")):
     out = {}
     for c in cols:
         if c in df.columns:
-            out[c] = pd.Series(pd.to_numeric(df[c], errors="coerce").values, index=d).dropna().sort_index()
+            out[c] = _clean(pd.Series(pd.to_numeric(df[c], errors="coerce").values, index=d))
+    if not out:
+        print(f"[warn] 財務省CSVに 2年/10年 の列が見つかりません。列名: {list(df.columns)[:20]}")
     return out
 
 
@@ -83,9 +111,19 @@ def load_rates(index, demo=False):
     out = {}
     for key, sid in (("US2", "DGS2"), ("US10", "DGS10")):
         try:
-            out[key] = parse_fred(_http(FRED_URL.format(sid)))
+            out[key] = parse_fred(_http(FRED_URL.format(sid), timeout=40, tries=2))
         except Exception as e:  # noqa: BLE001
             print(f"[warn] FRED {sid} 取得失敗: {type(e).__name__}: {e}")
+    if not all(k in out and len(out[k]) for k in ("US2", "US10")):
+        print("[info] 米財務省の公式CSVで補完します")
+        try:
+            year = dt.date.today().year
+            parts = [parse_treasury(_http(TREASURY_URL.format(y=y))) for y in (year - 1, year)]
+            for k in ("US2", "US10"):
+                if k not in out or not len(out[k]):
+                    out[k] = _clean(pd.concat([p[k] for p in parts if k in p]))
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 米財務省CSV 取得失敗: {type(e).__name__}: {e}")
     try:
         jp = parse_mof(_http(MOF_URL))
         out["JP2"], out["JP10"] = jp.get("2年"), jp.get("10年")
@@ -93,8 +131,14 @@ def load_rates(index, demo=False):
         print(f"[warn] 財務省 国債金利 取得失敗: {type(e).__name__}: {e}")
     res = pd.DataFrame(np.nan, index=index, columns=cols)
     for k, ser in out.items():
-        if ser is not None and len(ser):
-            res[k] = ser.reindex(index.union(ser.index)).ffill(limit=7).reindex(index)
+        try:
+            if ser is not None and len(ser):
+                ser = _clean(ser)
+                res[k] = ser.reindex(index.union(ser.index)).ffill(limit=7).reindex(index)
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] 金利 {k} の整形に失敗: {type(e).__name__}: {e}")
+    got = [k for k in cols if res[k].notna().any()]
+    print(f"[info] 金利データ取得: {got}")
     return res
 
 
