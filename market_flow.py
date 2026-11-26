@@ -99,6 +99,16 @@ REPS = {
 }
 
 
+def nav_html(active):
+    """ページ間ナビ(index.html=日本株, us.html=米国株, fx.html=為替)。公開フォルダ内の相対リンク。"""
+    items = (("index.html", "株式(日本)", "jp"), ("us.html", "株式(米国)", "us"), ("fx.html", "為替", "fx"))
+    links = "".join(f'<a href="{h}"{" class=on" if k == active else ""}>{n}</a>' for h, n, k in items)
+    return ("<style>.nav{display:flex;gap:6px;padding-top:14px}.nav a{padding:5px 14px;border:1px solid #bbb;"
+            "border-radius:999px;text-decoration:none;color:#264653;font-size:14px}"
+            ".nav a.on{background:#264653;color:#fff;border-color:#264653}</style>"
+            f'<nav class="nav">{links}</nav>')
+
+
 def notify(text):
     """SLACK_WEBHOOK_URL または DISCORD_WEBHOOK_URL に要約を送る(未設定なら何もしない)。"""
     import urllib.request
@@ -299,6 +309,7 @@ table.h th,table.mini th{background:#e8edf3}.up{background:#d8f3dc}.dn{backgroun
 .src summary{cursor:pointer;font-weight:600}.src h4{margin:12px 0 2px}.warn{color:#b5503a}
 code{background:#eceff3;padding:1px 4px;border-radius:3px}
 </style></head><body>
+__NAV__
 <h2>セクター資金フロー <small id="mk"></small></h2>
 <p class="sub" id="asof"></p>
 <div class="ctl">
@@ -443,6 +454,7 @@ def main():
     ap.add_argument("--no-holdings", action="store_true", help="保有・監視銘柄の表を出さない")
     ap.add_argument("--notify", action="store_true", help="要約を Slack/Discord Webhook に送る")
     ap.add_argument("--offline", action="store_true", help="plotly.js をHTMLに埋め込む(CDN不要)")
+    ap.add_argument("--nav", action="store_true", help="ページ間ナビ(株式/為替)を表示(公開用)")
     ap.add_argument("--shares-store", default="data/shares_history.csv", help="ETF口数の履歴CSV")
     ap.add_argument("-o", "--output", default="market_flow.html")
     a = ap.parse_args()
@@ -482,6 +494,7 @@ def main():
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
     data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
     html = (PAGE.replace("__PLOTLY__", plotly_tag)
+            .replace("__NAV__", nav_html(a.market) if a.nav else "")
             .replace("__SOURCES__", sources_html(cfg, bench_name, asof, generated, a.demo, sectors))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))
             .replace("__DATA__", data_json))

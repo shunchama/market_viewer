@@ -17,8 +17,14 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          python market_flow.py --no-holdings --notify -o docs/index.html
-          python market_flow.py --market us --no-holdings -o docs/us.html
+          python market_flow.py --no-holdings --nav --notify -o docs/index.html
+          python market_flow.py --market us --no-holdings --nav -o docs/us.html
+      - name: fx page (失敗しても株式ページの更新は続ける)
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python fx_flow.py --nav --notify -o docs/fx.html
       - run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
