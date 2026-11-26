@@ -8,27 +8,43 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: { python-version: "3.12" }
-      - run: pip install yfinance pandas numpy plotly
-      - env:
+      - run: pip install yfinance pandas numpy plotly xlrd
+      - name: stock pages
+        env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           python market_flow.py --no-holdings --nav --notify -o docs/index.html
           python market_flow.py --market us --no-holdings --nav -o docs/us.html
-      - name: fx page (失敗しても株式ページの更新は続ける)
+      - name: fx page (失敗しても他のページの更新は続ける)
         continue-on-error: true
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python fx_flow.py --nav --notify -o docs/fx.html
-      - run: |
+      - name: publish (stock/fx)
+        run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add docs data
           git diff --cached --quiet || git commit -m "Update market flow report"
+          git pull --rebase origin main || true
+          git push
+      - name: breadth page (全銘柄の取得で時間がかかる。失敗しても他は公開済み)
+        continue-on-error: true
+        timeout-minutes: 60
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python breadth_flow.py --nav --notify -o docs/breadth.html
+      - name: publish (breadth)
+        run: |
+          git add docs
+          git diff --cached --quiet || git commit -m "Update breadth report"
           git pull --rebase origin main || true
           git push

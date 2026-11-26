@@ -101,7 +101,7 @@ REPS = {
 
 def nav_html(active):
     """ページ間ナビ(index.html=日本株, us.html=米国株, fx.html=為替)。公開フォルダ内の相対リンク。"""
-    items = (("index.html", "株式(日本)", "jp"), ("us.html", "株式(米国)", "us"), ("fx.html", "為替", "fx"))
+    items = (("index.html", "株式(日本)", "jp"), ("us.html", "株式(米国)", "us"), ("fx.html", "為替", "fx"), ("breadth.html", "騰落数", "breadth"))
     links = "".join(f'<a href="{h}"{" class=on" if k == active else ""}>{n}</a>' for h, n, k in items)
     return ("<style>.nav{display:flex;gap:6px;padding-top:14px}.nav a{padding:5px 14px;border:1px solid #bbb;"
             "border-radius:999px;text-decoration:none;color:#264653;font-size:14px}"
