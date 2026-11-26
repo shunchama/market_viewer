@@ -221,13 +221,13 @@ __ASOF__
 </div>
 <p class="sum" id="sum"></p>
 <hr class="sep">
-<div id="c1" class="chart"></div><p class="note" id="n1"></p>
+<p class="note" id="n1"></p><div id="c1" class="chart"></div>
 <hr class="sep">
-<div class="tw" id="tb"></div><p class="note">② 騰落レシオは日次データから25営業日で計算(期間の選択には依存しません)。120以上=過熱、70以下=売られすぎが一般的な目安です。</p>
+<p class="note">② 騰落レシオは日次データから25営業日で計算(期間の選択には依存しません)。120以上=過熱、70以下=売られすぎが一般的な目安です。</p><div class="tw" id="tb"></div>
 <hr class="sep">
-<div id="c2" class="chart"></div><p class="note" id="n2"></p>
+<p class="note" id="n2"></p><div id="c2" class="chart"></div>
 <hr class="sep">
-<div id="c3" class="chart"></div><p class="note">④ 日次の(値上がり−値下がり)の累積。右肩上がりなら上昇が広い銘柄に及んでいる状態、指数だけ上がってADラインが下がるときは一部の銘柄頼みとされます。</p>
+<p class="note">④ 日次の(値上がり−値下がり)の累積。右肩上がりなら上昇が広い銘柄に及んでいる状態、指数だけ上がってADラインが下がるときは一部の銘柄頼みとされます。</p><div id="c3" class="chart"></div>
 __SOURCES__
 <script type="application/json" id="data">__DATA__</script>
 <script>
@@ -237,7 +237,7 @@ const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
 const L=()=>M()?{font:{family:FONT,size:11},margin:{l:78,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:110,r:30,t:50,b:50}};
 const T=s=>({text:s,font:{size:M()?14:17}});
-const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('afterend',el)}el.innerHTML='📅 '+html};
+const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('beforebegin',el)}el.innerHTML='📅 '+html};
 const COLS={up:'#2a9d8f',flat:'#b8bec6',down:'#e76f51'},LINE=['#264653','#2a9d8f','#e9c46a','#e76f51'];
 const win=e=>5*Math.max(1,Math.min(st.weeks,Math.floor(e/5)));
 const c=(w,mk,e)=>({up:D.counts[w][mk].up[e],down:D.counts[w][mk].down[e],flat:D.counts[w][mk].flat[e]});

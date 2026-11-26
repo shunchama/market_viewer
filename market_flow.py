@@ -381,17 +381,17 @@ __ASOF__
 </div>
 <p class="sum" id="sum"></p><p class="note" id="modenote"></p>
 <hr class="sep">
-<div id="c1" class="chart"></div><p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。マスにマウスを乗せると、代表銘柄の変動率と変動幅(円/ドル)を表示します。代表銘柄は各セクターの時価総額上位から手動で選んだもので、ETFの公式な構成銘柄ではありません。</p>
+<p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。マスにマウスを乗せると、代表銘柄の変動率と変動幅(円/ドル)を表示します。代表銘柄は各セクターの時価総額上位から手動で選んだもので、ETFの公式な構成銘柄ではありません。</p><div id="c1" class="chart"></div>
 <hr class="sep">
-<div id="c2" class="chart"></div><p class="note" id="n2"></p>
+<p class="note" id="n2"></p><div id="c2" class="chart"></div>
 <hr class="sep">
-<div id="c3" class="chart"></div><p class="note">③ 流出額を流入セクターの大きさで按分した模式図です。実際の資金の行き先を示すものではありません。</p>
+<p class="note">③ 流出額を流入セクターの大きさで按分した模式図です。実際の資金の行き先を示すものではありません。</p><div id="c3" class="chart"></div>
 <hr class="sep">
-<div id="c4" class="chart"></div><p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。時計回り(Improving→Leading→Weakening→Lagging)に循環するとされます。</p>
+<p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。時計回り(Improving→Leading→Weakening→Lagging)に循環するとされます。</p><div id="c4" class="chart"></div>
 <hr class="sep">
 <div id="hold" style="display:none"><h3 style="font-weight:400">⑤ 保有・監視銘柄</h3><div id="c5"></div></div>
 <hr class="sep">
-<div id="c6" class="chart"></div><p class="note" id="n6"></p>
+<p class="note" id="n6"></p><div id="c6" class="chart"></div>
 __SOURCES__
 <script type="application/json" id="data">__DATA__</script>
 <script>
@@ -407,7 +407,7 @@ const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
 const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
 const T=s=>({text:s,font:{size:M()?14:17}});
-const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('afterend',el)}el.innerHTML='📅 '+html};
+const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('beforebegin',el)}el.innerHTML='📅 '+html};
 const chip=(ts,end)=>{const LV=D.last||{},ds=ts.map(t=>LV[t]).filter(Boolean);if(!ds.length)return '不明';
  const mx=ds.reduce((a,b)=>a>b?a:b),ref=mx<end?mx:end,late=ts.filter(t=>LV[t]&&LV[t]<ref);
  return `<b>${ref}</b>`+(late.length?` <span class="stale">(${late.length}本は${[...new Set(late.map(t=>LV[t].slice(5)))].join('・')}が最新)</span>`:'')};

@@ -244,16 +244,16 @@ __ASOF__
 </div>
 <p class="sum" id="sum"></p>
 <hr class="sep">
-<div id="c1" class="chart"></div><p class="note">① 外貨/円の変化率。プラス(橙)=円安、マイナス(青)=円高。マスにマウスを乗せるとレートと変動幅(円)を表示します。</p>
+<p class="note">① 外貨/円の変化率。プラス(橙)=円安、マイナス(青)=円高。マスにマウスを乗せるとレートと変動幅(円)を表示します。</p><div id="c1" class="chart"></div>
 <hr class="sep">
-<div id="c2" class="chart"></div><p class="note" id="n2"></p>
+<p class="note" id="n2"></p><div id="c2" class="chart"></div>
 <hr class="sep">
-<div id="c3" class="chart"></div><p class="note">③ 全通貨が同じ向きなら「円」そのものの動き、通貨ごとに違えば相手通貨側の事情が大きいことを示します。</p>
+<p class="note">③ 全通貨が同じ向きなら「円」そのものの動き、通貨ごとに違えば相手通貨側の事情が大きいことを示します。</p><div id="c3" class="chart"></div>
 <div id="ratebox">
  <hr class="sep">
-<div id="c4" class="chart"></div><p class="note" id="n4"></p>
+<p class="note" id="n4"></p><div id="c4" class="chart"></div>
  <hr class="sep">
-<h3 style="font-weight:400">⑤ 日米の金利</h3><div id="c5"></div><p class="note">⑤ 水準は終了日の利回り(%)。変化は期間・1日の変化(bp)。</p>
+<h3 style="font-weight:400">⑤ 日米の金利</h3><p class="note">⑤ 水準は終了日の利回り(%)。変化は期間・1日の変化(bp)。</p><div id="c5"></div>
 </div>
 __SOURCES__
 <script type="application/json" id="data">__DATA__</script>
@@ -268,7 +268,7 @@ const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
 const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
 const T=s=>({text:s,font:{size:M()?14:17}});
-const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('afterend',el)}el.innerHTML='📅 '+html};
+const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('beforebegin',el)}el.innerHTML='📅 '+html};
 const chip=(ts,end)=>{const LV=D.last||{},ds=ts.map(t=>LV[t]).filter(Boolean);if(!ds.length)return '不明';
  const mx=ds.reduce((a,b)=>a>b?a:b),ref=mx<end?mx:end,late=ts.filter(t=>LV[t]&&LV[t]<ref);
  return `<b>${ref}</b>`+(late.length?` <span class="stale">(${late.length}本は${[...new Set(late.map(t=>LV[t].slice(5)))].join('・')}が最新)</span>`:'')};
