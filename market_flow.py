@@ -62,6 +62,43 @@ STOCK_SECTOR = {
 }
 
 
+# ヒートマップのホバーに出す代表銘柄(各セクターの時価総額上位から手動選定。ETFの公式構成銘柄ではない)
+REPS = {
+    "jp": {
+        "1617.T": [("2914.T", "JT"), ("2502.T", "アサヒ"), ("2802.T", "味の素")],
+        "1618.T": [("1605.T", "INPEX"), ("5020.T", "ENEOS"), ("5019.T", "出光興産")],
+        "1619.T": [("1925.T", "大和ハウス"), ("1812.T", "鹿島"), ("1802.T", "大林組")],
+        "1620.T": [("4063.T", "信越化学"), ("3407.T", "旭化成"), ("4452.T", "花王")],
+        "1621.T": [("4502.T", "武田薬品"), ("4568.T", "第一三共"), ("4519.T", "中外製薬")],
+        "1622.T": [("7203.T", "トヨタ"), ("7267.T", "ホンダ"), ("6902.T", "デンソー")],
+        "1623.T": [("5401.T", "日本製鉄"), ("5411.T", "JFE"), ("5713.T", "住友金属鉱山")],
+        "1624.T": [("6301.T", "コマツ"), ("6367.T", "ダイキン"), ("7011.T", "三菱重工")],
+        "1625.T": [("6758.T", "ソニーG"), ("8035.T", "東京エレクトロン"), ("6501.T", "日立")],
+        "1626.T": [("9984.T", "ソフトバンクG"), ("9432.T", "NTT"), ("9433.T", "KDDI")],
+        "1627.T": [("9501.T", "東京電力"), ("9503.T", "関西電力"), ("9531.T", "東京ガス")],
+        "1628.T": [("9022.T", "JR東海"), ("9020.T", "JR東日本"), ("9101.T", "日本郵船")],
+        "1629.T": [("8058.T", "三菱商事"), ("8001.T", "伊藤忠"), ("8031.T", "三井物産")],
+        "1630.T": [("9983.T", "ファーストリテイリング"), ("3382.T", "セブン&アイ"), ("8267.T", "イオン")],
+        "1631.T": [("8306.T", "三菱UFJ"), ("8316.T", "三井住友FG"), ("8411.T", "みずほFG")],
+        "1632.T": [("8766.T", "東京海上"), ("8591.T", "オリックス"), ("8604.T", "野村HD")],
+        "1633.T": [("8801.T", "三井不動産"), ("8802.T", "三菱地所"), ("8830.T", "住友不動産")],
+    },
+    "us": {
+        "XLK": [("AAPL", "Apple"), ("MSFT", "Microsoft"), ("NVDA", "NVIDIA")],
+        "XLF": [("BRK-B", "Berkshire"), ("JPM", "JPMorgan"), ("V", "Visa")],
+        "XLV": [("LLY", "Eli Lilly"), ("UNH", "UnitedHealth"), ("JNJ", "J&J")],
+        "XLY": [("AMZN", "Amazon"), ("TSLA", "Tesla"), ("HD", "Home Depot")],
+        "XLP": [("PG", "P&G"), ("COST", "Costco"), ("WMT", "Walmart")],
+        "XLE": [("XOM", "Exxon"), ("CVX", "Chevron"), ("COP", "ConocoPhillips")],
+        "XLI": [("GE", "GE Aerospace"), ("CAT", "Caterpillar"), ("RTX", "RTX")],
+        "XLB": [("LIN", "Linde"), ("SHW", "Sherwin-Williams"), ("FCX", "Freeport")],
+        "XLU": [("NEE", "NextEra"), ("SO", "Southern"), ("DUK", "Duke")],
+        "XLRE": [("PLD", "Prologis"), ("AMT", "American Tower"), ("EQIX", "Equinix")],
+        "XLC": [("META", "Meta"), ("GOOGL", "Alphabet"), ("NFLX", "Netflix")],
+    },
+}
+
+
 def notify(text):
     """SLACK_WEBHOOK_URL または DISCORD_WEBHOOK_URL に要約を送る(未設定なら何もしない)。"""
     import urllib.request
@@ -190,7 +227,7 @@ def lst(series):
     return [None if pd.isna(x) else round(float(x), 4) for x in series]
 
 
-def build_payload(close, vol, shares, sectors, bench, groups):
+def build_payload(close, vol, shares, sectors, bench, groups, reps):
     cols = [t for t in [bench, *sectors] if t in close.columns]
     holdings = []
     for g, tickers in groups.items():
@@ -206,6 +243,9 @@ def build_payload(close, vol, shares, sectors, bench, groups):
         "holdings": holdings,
         "close": {t: lst(close[t]) for t in cols},
         "vol": {t: lst(vol[t]) for t in cols},
+        "reps": {st: [{"t": t, "name": n} for t, n in lst_ if t in close.columns]
+                 for st, lst_ in reps.items()},
+        "rclose": {t: lst(close[t]) for lst_ in reps.values() for t, _ in lst_ if t in close.columns},
         "shares": {t: (lst(shares[t]) if t in shares.columns and shares[t].notna().any() else None)
                    for t in sectors if t in close.columns},
     }
@@ -221,6 +261,7 @@ def sources_html(cfg, bench_name, asof, generated, demo, sectors):
 <ul>
 <li><b>株価・売買高</b>: Yahoo Finance(Pythonライブラリ <code>yfinance</code> 経由)。日足、分割・配当調整済みの終値、直近約1年。無料データのため遅延・欠損・訂正があり得ます。</li>
 <li><b>セクター</b>: {cfg['source']}。</li>
+<li><b>代表銘柄</b>(ヒートマップのホバー表示): 各セクターの時価総額上位から手動で3銘柄ずつ選定(<code>market_flow.py</code> の <code>REPS</code>)。ETFの公式な構成銘柄・比率ではありません。株価はYahoo Finance。</li>
 <li><b>ベンチマーク</b>: {bench_name}。</li>
 <li><b>ETF発行口数</b>: Yahoo Finance(<code>get_shares_full</code> と、実行日ごとのスナップショット)。リポジトリの <code>data/shares_history.csv</code> に蓄積。ETFの口数がYahooで未提供・更新が遅い場合は「近似」に自動で切り替わります。公式値(運用会社・取引所の公表)で補うときはこのCSVに <code>date,ticker,shares</code> で追記してください。</li>
 <li><b>最新データ日</b>: {asof} ／ <b>ページ生成</b>: {generated}</li>
@@ -269,7 +310,7 @@ code{background:#eceff3;padding:1px 4px;border-radius:3px}
  <select id="mode"><option value="auto">自動</option><option value="actual">実フロー(口数×価格)</option><option value="proxy">近似(値動き×売買代金)</option></select>
 </div>
 <p class="sum" id="sum"></p><p class="note" id="modenote"></p>
-<div id="c1" class="chart"></div><p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。</p>
+<div id="c1" class="chart"></div><p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。マスにマウスを乗せると、代表銘柄の変動率と変動幅(円/ドル)を表示します。代表銘柄は各セクターの時価総額上位から手動で選んだもので、ETFの公式な構成銘柄ではありません。</p>
 <div id="c2" class="chart"></div><p class="note" id="n2"></p>
 <div id="c3" class="chart"></div><p class="note">③ 流出額を流入セクターの大きさで按分した模式図です。実際の資金の行き先を示すものではありません。</p>
 <div id="c4" class="chart"></div><p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。時計回り(Improving→Leading→Weakening→Lagging)に循環するとされます。</p>
@@ -321,8 +362,12 @@ function render(){
  // ① heatmap
  const h=[...rows].sort((x,y)=>(y.r5??-1e9)-(x.r5??-1e9)),cols=['1日','1週','1ヶ月','3ヶ月'];
  const z=h.map(r=>[r.r1,r.r5,r.r21,r.r63]),lim=Math.max(1,...z.flat().filter(v=>v!=null).map(Math.abs));
+ const PN=[1,5,21,63],money=v=>META.cur==='JPY'?(v>=0?'+':'-')+Math.abs(Math.round(v)).toLocaleString()+'円':(v>=0?'+':'-')+'$'+Math.abs(v).toFixed(2);
+ const hv=h.map((row,i)=>PN.map((n,k)=>{const lines=(D.reps[row.t]||[]).map(r=>{const c=D.rclose[r.t];if(!c)return null;const x=c[e],y=c[e-n];
+   return(x==null||y==null||!y)?null:`${r.name}  ${fmt((x/y-1)*100,2)}(${money(x-y)})`}).filter(Boolean);
+  return`<b>${row.name}</b>  ${cols[k]}: ${fmt(z[i][k],2)}`+(lines.length?'<br>代表銘柄:<br>'+lines.join('<br>'):'')}));
  Plotly.react('c1',[{type:'heatmap',z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,colorscale:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
-  text:z.map(rw=>rw.map(v=>v==null?'':v.toFixed(1)+'%')),texttemplate:'%{text}',hovertemplate:'%{y} %{x}: %{z:.2f}%<extra></extra>'}],
+  text:z.map(rw=>rw.map(v=>v==null?'':v.toFixed(1)+'%')),texttemplate:'%{text}',hovertext:hv,hovertemplate:'%{hovertext}<extra></extra>'}],
   {...LAY,title:{text:'① セクター別騰落率'},height:80+28*h.length,yaxis:{autorange:'reversed'}},{displayModeBar:false});
 
  // ② flow bars
@@ -413,7 +458,9 @@ def main():
         except Exception as e:  # noqa: BLE001
             print(f"[warn] 保有銘柄を読み込めません: {e}")
     extra = [t for g in groups.values() for t in g]
-    close, vol = load_prices(list(dict.fromkeys([bench, *sectors, *extra])), demo=a.demo)
+    reps = REPS[a.market]
+    rep_tickers = [t for lst_ in reps.values() for t, _ in lst_]
+    close, vol = load_prices(list(dict.fromkeys([bench, *sectors, *extra, *rep_tickers])), demo=a.demo)
     if bench not in close.columns or close[bench].isna().all():
         sys.exit("ベンチマークの価格を取得できませんでした")
     shares = load_shares([t for t in sectors if t in close.columns], close.index,
@@ -424,7 +471,7 @@ def main():
     asof = close.index[-1].date()
     generated = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).strftime("%Y-%m-%d %H:%M JST")
 
-    payload = build_payload(close, vol, shares, sectors, bench, groups)
+    payload = build_payload(close, vol, shares, sectors, bench, groups, reps)
     n_sh = sum(v is not None for v in payload["shares"].values())
     meta = {"weeks": max(1, round(a.window / 5)), "cur": "JPY" if a.market == "jp" else "USD",
             "label": f"({a.market.upper()}{' / DEMO' if a.demo else ''})",
