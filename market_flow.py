@@ -103,6 +103,10 @@ LAST_VALID = {}   # ティッカー -> 価格が最後に取得できた日(ffil
 SHARES_LAST = {}  # ティッカー -> 口数の最終観測日
 
 
+def date_str(x):
+    return None if x is None or pd.isna(x) else pd.Timestamp(x).strftime("%Y-%m-%d")
+
+
 def asof_html(rows, ref):
     """データごとの基準日の表。rows = [(名前, 日付 or None, 備考)]。ref(ページの最新日)より古いものを強調する。"""
     ref = pd.Timestamp(ref).normalize()
@@ -298,6 +302,9 @@ def build_payload(close, vol, shares, sectors, bench, groups, reps):
         "vol": {t: lst(vol[t]) for t in cols},
         "reps": {st: [{"t": t, "name": n} for t, n in lst_ if t in close.columns]
                  for st, lst_ in reps.items()},
+        "last": {t: date_str(LAST_VALID.get(t)) for t in
+                 dict.fromkeys(cols + [t for lst_ in reps.values() for t, _ in lst_])},
+        "slast": {t: date_str(SHARES_LAST.get(t)) for t in sectors if SHARES_LAST.get(t) is not None},
         "rclose": {t: lst(close[t]) for lst_ in reps.values() for t, _ in lst_ if t in close.columns},
         "shares": {t: (lst(shares[t]) if t in shares.columns and shares[t].notna().any() else None)
                    for t in sectors if t in close.columns},
@@ -345,7 +352,7 @@ h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
 .ctl button.on{background:#264653;color:#fff;border-color:#264653}
 .ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
 .sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
-.chart{width:100%}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
+.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
 table.h th,table.h td,table.mini th,table.mini td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
 table.h th,table.mini th{background:#e8edf3}.up{background:#d8f3dc}.dn{background:#fde2dd}
 .src{margin-top:34px;font-size:13px;line-height:1.7;background:#f7f8fa;padding:10px 16px;border-radius:8px}
@@ -394,6 +401,10 @@ const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
 const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
 const T=s=>({text:s,font:{size:M()?14:17}});
+const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('afterend',el)}el.innerHTML='📅 '+html};
+const chip=(ts,end)=>{const LV=D.last||{},ds=ts.map(t=>LV[t]).filter(Boolean);if(!ds.length)return '不明';
+ const mx=ds.reduce((a,b)=>a>b?a:b),ref=mx<end?mx:end,late=ts.filter(t=>LV[t]&&LV[t]<ref);
+ return `<b>${ref}</b>`+(late.length?` <span class="stale">(${late.length}本は${[...new Set(late.map(t=>LV[t].slice(5)))].join('・')}が最新)</span>`:'')};
 
 function proxyFlow(t,a,b){let s=0;for(let i=a+1;i<=b;i++){const c=C[t][i],p=C[t][i-1],v=V[t][i];if(c==null||p==null||v==null)continue;s+=(c/p-1)*c*v}return s}
 function actualFlow(t,a,b){const s=S[t];if(!s)return null;let x=0,n=0;for(let i=a+1;i<=b;i++){const c=C[t][i];if(s[i]==null||s[i-1]==null||c==null)continue;x+=(s[i]-s[i-1])*c;n++}return n?x:null}
@@ -484,6 +495,12 @@ function render(){
   hovertemplate:o.x.name+' %{y:.1f}%<extra></extra>'})),
   {...L(),title:T('⑥ 累積フロー推移(直近60営業日)'),yaxis:{title:{text:M()?'累積フロー (%)':'累積フロー (全体の|フロー|に対する %)'}},height:M()?600:520,margin:M()?{l:44,r:8,t:44,b:50}:{l:60,r:20,t:50,b:50},legend:M()?{orientation:'h',y:-0.2,font:{size:10}}:{}},CFG);
  $('n6').textContent=`⑥ ${unit}。上昇が続くセクターは資金流入が継続しています。`;
+ const end=D.dates[e],secT=secs.map(x=>x.t),repT=Object.keys(D.rclose||{}),SL=Object.values(D.slast||{}).filter(Boolean).sort();
+ const flowTxt=mode==='actual'?`ETF口数 <b>${SL.length?SL[SL.length-1]:'-'}</b>(最終観測日)・ETF終値 ${chip(secT,end)}`:`ETF終値・売買代金 ${chip(secT,end)}`;
+ dt('c1',`ETF終値 ${chip(secT,end)} ／ 代表銘柄 ${chip(repT,end)}`);dt('c2',flowTxt);dt('c3',flowTxt);
+ dt('c4',`ETF終値(ベンチマーク含む) ${chip([...secT,B],end)}`);
+ if(D.holdings.length)dt('c5',`保有・監視銘柄の終値 ${chip(D.holdings.map(x=>x.t),end)}`);
+ dt('c6',flowTxt);
 }
 
 // ── controls ──

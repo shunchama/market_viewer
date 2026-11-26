@@ -218,7 +218,7 @@ h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
 .ctl button.on{background:#264653;color:#fff;border-color:#264653}
 .ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
 .sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
-.chart{width:100%}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
+.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
 table.h th,table.h td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
 table.h th{background:#e8edf3}.up{background:#fde8d8}.dn{background:#dbe9f3}
 .src{margin-top:34px;font-size:13px;line-height:1.7;background:#f7f8fa;padding:10px 16px;border-radius:8px}
@@ -263,6 +263,10 @@ const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
 const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
 const T=s=>({text:s,font:{size:M()?14:17}});
+const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('afterend',el)}el.innerHTML='📅 '+html};
+const chip=(ts,end)=>{const LV=D.last||{},ds=ts.map(t=>LV[t]).filter(Boolean);if(!ds.length)return '不明';
+ const mx=ds.reduce((a,b)=>a>b?a:b),ref=mx<end?mx:end,late=ts.filter(t=>LV[t]&&LV[t]<ref);
+ return `<b>${ref}</b>`+(late.length?` <span class="stale">(${late.length}本は${[...new Set(late.map(t=>LV[t].slice(5)))].join('・')}が最新)</span>`:'')};
 const COL=[[0,'#3f7fae'],[0.5,'#f7f7f7'],[1,'#f08a3c']];
 function corr(x,y){const n=x.length;if(n<10)return null;const mx=x.reduce((a,b)=>a+b)/n,my=y.reduce((a,b)=>a+b)/n;
  let sxy=0,sx=0,sy=0;for(let i=0;i<n;i++){sxy+=(x[i]-mx)*(y[i]-my);sx+=(x[i]-mx)**2;sy+=(y[i]-my)**2}return(sx&&sy)?sxy/Math.sqrt(sx*sy):null}
@@ -274,6 +278,7 @@ function render(){
  $('wk').value=st.weeks;$('end').value=D.dates[e];
  const chg=P.filter(t=>F[t][e]!=null&&F[t][a]!=null).map(t=>({t,name:NM[t],r:pct(F[t][e],F[t][a]),d:F[t][e]-F[t][a],last:F[t][e]})).sort((x,y)=>y.r-x.r);
  if(!chg.length){$('sum').textContent='この期間の為替データがありません';return}
+ const end=D.dates[e],fxTxt=`為替(クロス円) ${chip(P,end)}`;dt('c1',fxTxt);dt('c2',fxTxt);dt('c3',fxTxt);
  const avg=chg.reduce((s,x)=>s+x.r,0)/chg.length,lo=chg[chg.length-1];
  $('sum').innerHTML=`円は主要${chg.length}通貨に対し平均 <b>${Math.abs(avg).toFixed(2)}% ${avg>=0?'円安':'円高'}</b>(${rng})　最も円安: <b>${chg[0].name}</b> ${fmt(chg[0].r,2)}　${lo.r<0?'最も円高':'円安が最小'}: <b>${lo.name}</b> ${fmt(lo.r,2)}`;
 
@@ -304,6 +309,10 @@ function render(){
  const U=F['USDJPY=X'],rb=$('ratebox');
  if(!(R&&R.US10&&R.JP10&&U)){rb.style.display='none';return}
  rb.style.display='';
+ const RL=D.rlast||{},rl=(k,n)=>{const r=RL[k];if(!r||!r.date)return `${n} 取得できず`;const late=r.date<end;
+  return `${n} <b>${r.date}</b>(${r.src})`+(late?' <span class="stale">※終了日より前</span>':'')};
+ const ratesTxt=`ドル円 ${chip(['USDJPY=X'],end)} ／ ${rl('US10','米10年')} ／ ${rl('JP10','日10年')} ／ ${rl('US2','米2年')} ／ ${rl('JP2','日2年')}`;
+ dt('c4',ratesTxt);dt('c5',ratesTxt);
  const sp=(x,y)=>D.dates.map((_,i)=>(x[i]==null||y[i]==null)?null:x[i]-y[i]),s10=sp(R.US10,R.JP10),s2=(R.US2&&R.JP2)?sp(R.US2,R.JP2):null;
  const s0=Math.max(0,e-249),X=D.dates.slice(s0,e+1);
  const t4=[{type:'scatter',mode:'lines',name:'ドル円(左軸)',x:X,y:U.slice(s0,e+1),line:{color:'#111'},yaxis:'y',connectgaps:true},
@@ -362,6 +371,8 @@ def main():
         "dates": [d.strftime("%Y-%m-%d") for d in fx.index],
         "fx": {"names": {t: FX_PAIRS[t] for t in fx.columns}, "close": {t: lst(fx[t]) for t in fx.columns}},
         "rates": {k: lst(rates[k]) for k in rates.columns if rates[k].notna().any()},
+        "last": {t: mf.date_str(mf.LAST_VALID.get(t)) for t in fx.columns},
+        "rlast": {k: {"date": mf.date_str(d), "src": src} for k, (d, src) in RATE_LAST.items()},
     }
     meta = {"weeks": max(1, round(a.window / 5)), "generated": generated, "rn": RATE_NAMES,
             "label": "(DEMO)" if a.demo else ""}

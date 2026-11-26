@@ -197,7 +197,7 @@ h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
 .ctl button.on{background:#264653;color:#fff;border-color:#264653}
 .ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
 .sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
-.chart{width:100%}.tw{overflow-x:auto}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
+.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}.stale{color:#b5503a;font-weight:600}.tw{overflow-x:auto}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
 table.h th,table.h td,table.mini th,table.mini td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
 table.h th,table.mini th{background:#e8edf3}table.h td.r,table.h th.r{text-align:right}
 .up{color:#1a9850;font-weight:600}.dn{color:#c0392b;font-weight:600}.hot{background:#fde2dd}.cold{background:#dbe9f3}
@@ -233,6 +233,7 @@ const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
 const L=()=>M()?{font:{family:FONT,size:11},margin:{l:78,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:110,r:30,t:50,b:50}};
 const T=s=>({text:s,font:{size:M()?14:17}});
+const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('afterend',el)}el.innerHTML='📅 '+html};
 const COLS={up:'#2a9d8f',flat:'#b8bec6',down:'#e76f51'},LINE=['#264653','#2a9d8f','#e9c46a','#e76f51'];
 const win=e=>5*Math.max(1,Math.min(st.weeks,Math.floor(e/5)));
 const c=(w,mk,e)=>({up:D.counts[w][mk].up[e],down:D.counts[w][mk].down[e],flat:D.counts[w][mk].flat[e]});
@@ -275,6 +276,11 @@ function render(){
  const t3=MK.map((m,i)=>{let s=0;return{type:'scatter',mode:'lines',name:m.name,x:xa,y:xa.map((_,k)=>{s+=D.counts[1][m.key].up[a0+k]-D.counts[1][m.key].down[a0+k];return s}),
   line:{color:LINE[i%4],width:m.key==='all'?3:2},hovertemplate:m.name+' %{y:,}<extra></extra>'}});
  Plotly.react('c3',t3,{...L(),title:T('④ ADライン(値上がり−値下がりの累積)'),yaxis:{title:{text:'累積(銘柄数)'}},height:M()?380:420,margin:M()?{l:52,r:8,t:44,b:50}:{l:70,r:20,t:50,b:50},legend:{orientation:'h',y:-0.2}},CFG);
+ const end=D.dates[e],old=D.dates[Math.max(0,e-w)],lag=(e===N-1&&D.stale_n)?` ／ <span class="stale">${D.stale_n.toLocaleString()}銘柄は最新日の値なし(除外)</span>`:'';
+ dt('c1',`終値の基準日 <b>${end}</b>(比較先 ${old})${lag} ／ 銘柄一覧 ${D.list_date||'不明'}`);
+ dt('tb',`終値の基準日 <b>${end}</b>(騰落レシオは ${D.dates[Math.max(0,e-24)]} 〜 ${end} の25営業日)`);
+ dt('c2',`最新 <b>${end}</b>(各日の${w}営業日比。${D.dates[s0]} 〜 ${end})`);
+ dt('c3',`最新 <b>${end}</b>(日次の累積。${D.dates[a0]} 〜 ${end})`);
 }
 $('mk').textContent=META.label;
 [[1,'1週'],[2,'2週'],[4,'4週'],[13,'13週']].forEach(([w,l])=>{const b=document.createElement('button');b.textContent=l;b.dataset.w=w;
@@ -328,6 +334,8 @@ def main():
     used_t = [t for v in universe.values() for t in v if t in close.columns]
     lv = close[used_t].apply(lambda x: x.last_valid_index())
     stale_n = int((lv < close.index[-1]).sum())
+    payload["stale_n"] = stale_n
+    payload["list_date"] = None if list_date is None else pd.Timestamp(list_date).strftime("%Y-%m-%d")
     rows = [("株価(上場全銘柄)", close.index[-1], f"{len(used_t):,}銘柄を集計。うち{stale_n:,}銘柄は最新日の値なし(売買不成立・取得漏れなど)"),
             ("銘柄一覧(JPX)", list_date, "上場銘柄一覧ファイルの日付" if list_date is not None else "日付を読み取れず")]
     html = (PAGE.replace("__PLOTLY__", plotly_tag)
