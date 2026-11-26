@@ -16,6 +16,7 @@ import datetime as dt
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -25,7 +26,8 @@ import pandas as pd
 
 from market_flow import asof_html, nav_html, notify
 
-JPX_LIST_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"
+JPX_PAGE_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/01.html"   # 『東証上場銘柄一覧』のページ(月次更新)
+JPX_LIST_URL = "https://www.jpx.co.jp/markets/statistics-equities/misc/tvdivq0000001vg2-att/data_j.xls"   # 旧来のアドレス(404の場合あり)
 MARKETS = (("prime", "プライム", "プライム"), ("standard", "スタンダード", "スタンダード"),
            ("growth", "グロース", "グロース"))
 WEEKS = 26
@@ -70,6 +72,49 @@ def jpx_list_date(raw):
         return None
 
 
+def _get(url, timeout=60):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 market-flow"})
+    return urllib.request.urlopen(req, timeout=timeout).read()
+
+
+def find_jpx_list_urls():
+    """JPXの『東証上場銘柄一覧』ページからExcelのリンクを探す。見つからなければ旧アドレスだけを返す。"""
+    from urllib.parse import urljoin
+    cands = []
+    override = os.environ.get("JPX_LIST_URL")
+    if override:
+        cands.append(override)
+    try:
+        html = _get(JPX_PAGE_URL).decode("utf-8", errors="replace")
+        hrefs = re.findall(r"""href=["']([^"']+?\.xlsx?)(?:\?[^"']*)?["']""", html, flags=re.I)
+        print(f"[info] JPXページのExcelリンク: {hrefs[:10]}")
+        hrefs = sorted(set(hrefs), key=lambda h: (0 if "data_j" in h.lower() else 1, h))
+        cands += [urljoin(JPX_PAGE_URL, h) for h in hrefs]
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] JPXページを読めません: {type(e).__name__}: {e}")
+    cands += [JPX_LIST_URL, JPX_LIST_URL + "x"]
+    return list(dict.fromkeys(cands))
+
+
+def download_jpx_list():
+    """候補を順に試し、内国株式が千銘柄以上読めた最初のファイルを採用する。(raw, URL) を返す。"""
+    errors = []
+    for url in find_jpx_list_urls()[:8]:
+        try:
+            raw = _get(url)
+            uni = parse_jpx_list(raw)
+            n = sum(len(v) for v in uni.values())
+            if n >= 1000:
+                print(f"[info] JPX銘柄一覧を採用: {url}({n}銘柄)")
+                return raw, url
+            errors.append(f"{url}: 銘柄が{n}件のみ(別のファイル)")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{url}: {type(e).__name__}: {e}")
+    raise RuntimeError("JPXの銘柄一覧を取得できませんでした。\n  " + "\n  ".join(errors)
+                       + "\n  → 手元で一覧を保存し --list-file で指定するか、環境変数 JPX_LIST_URL にアドレスを指定してください")
+
+
 def load_universe(list_file=None, demo=False, limit=None):
     """({市場: [ティッカー]}, 一覧ファイルの日付) を返す。"""
     if demo:
@@ -78,9 +123,7 @@ def load_universe(list_file=None, demo=False, limit=None):
     if list_file:
         raw = open(list_file, "rb").read()
     else:
-        import urllib.request
-        req = urllib.request.Request(JPX_LIST_URL, headers={"User-Agent": "Mozilla/5.0 market-flow"})
-        raw = urllib.request.urlopen(req, timeout=60).read()
+        raw, _ = download_jpx_list()
     uni = parse_jpx_list(raw)
     if limit:
         uni = {k: v[: max(1, limit // 3)] for k, v in uni.items()}
