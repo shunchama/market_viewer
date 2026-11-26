@@ -197,7 +197,7 @@ h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
 .ctl button.on{background:#264653;color:#fff;border-color:#264653}
 .ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
 .sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
-.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}.stale{color:#b5503a;font-weight:600}.tw{overflow-x:auto}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
+.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}hr.sep{border:0;border-top:2px solid #cfd6df;margin:30px 0 14px}.stale{color:#b5503a;font-weight:600}.tw{overflow-x:auto}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
 table.h th,table.h td,table.mini th,table.mini td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
 table.h th,table.mini th{background:#e8edf3}table.h td.r,table.h th.r{text-align:right}
 .up{color:#1a9850;font-weight:600}.dn{color:#c0392b;font-weight:600}.hot{background:#fde2dd}.cold{background:#dbe9f3}
@@ -220,9 +220,13 @@ __ASOF__
  <label>終了日</label><button id="prev">◀ 前週</button><input type="date" id="end"><button id="next">次週 ▶</button><button id="latest">最新</button>
 </div>
 <p class="sum" id="sum"></p>
+<hr class="sep">
 <div id="c1" class="chart"></div><p class="note" id="n1"></p>
+<hr class="sep">
 <div class="tw" id="tb"></div><p class="note">② 騰落レシオは日次データから25営業日で計算(期間の選択には依存しません)。120以上=過熱、70以下=売られすぎが一般的な目安です。</p>
+<hr class="sep">
 <div id="c2" class="chart"></div><p class="note" id="n2"></p>
+<hr class="sep">
 <div id="c3" class="chart"></div><p class="note">④ 日次の(値上がり−値下がり)の累積。右肩上がりなら上昇が広い銘柄に及んでいる状態、指数だけ上がってADラインが下がるときは一部の銘柄頼みとされます。</p>
 __SOURCES__
 <script type="application/json" id="data">__DATA__</script>

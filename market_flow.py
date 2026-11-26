@@ -352,7 +352,7 @@ h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
 .ctl button.on{background:#264653;color:#fff;border-color:#264653}
 .ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
 .sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
-.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
+.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}hr.sep{border:0;border-top:2px solid #cfd6df;margin:30px 0 14px}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
 table.h th,table.h td,table.mini th,table.mini td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
 table.h th,table.mini th{background:#e8edf3}.up{background:#d8f3dc}.dn{background:#fde2dd}
 .src{margin-top:34px;font-size:13px;line-height:1.7;background:#f7f8fa;padding:10px 16px;border-radius:8px}
@@ -380,11 +380,17 @@ __ASOF__
  <select id="mode"><option value="auto">自動</option><option value="actual">実フロー(口数×価格)</option><option value="proxy">近似(値動き×売買代金)</option></select>
 </div>
 <p class="sum" id="sum"></p><p class="note" id="modenote"></p>
+<hr class="sep">
 <div id="c1" class="chart"></div><p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。マスにマウスを乗せると、代表銘柄の変動率と変動幅(円/ドル)を表示します。代表銘柄は各セクターの時価総額上位から手動で選んだもので、ETFの公式な構成銘柄ではありません。</p>
+<hr class="sep">
 <div id="c2" class="chart"></div><p class="note" id="n2"></p>
+<hr class="sep">
 <div id="c3" class="chart"></div><p class="note">③ 流出額を流入セクターの大きさで按分した模式図です。実際の資金の行き先を示すものではありません。</p>
+<hr class="sep">
 <div id="c4" class="chart"></div><p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。時計回り(Improving→Leading→Weakening→Lagging)に循環するとされます。</p>
+<hr class="sep">
 <div id="hold" style="display:none"><h3 style="font-weight:400">⑤ 保有・監視銘柄</h3><div id="c5"></div></div>
+<hr class="sep">
 <div id="c6" class="chart"></div><p class="note" id="n6"></p>
 __SOURCES__
 <script type="application/json" id="data">__DATA__</script>

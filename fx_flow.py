@@ -218,7 +218,7 @@ h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
 .ctl button.on{background:#264653;color:#fff;border-color:#264653}
 .ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
 .sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
-.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
+.chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}hr.sep{border:0;border-top:2px solid #cfd6df;margin:30px 0 14px}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
 table.h th,table.h td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
 table.h th{background:#e8edf3}.up{background:#fde8d8}.dn{background:#dbe9f3}
 .src{margin-top:34px;font-size:13px;line-height:1.7;background:#f7f8fa;padding:10px 16px;border-radius:8px}
@@ -243,12 +243,17 @@ __ASOF__
  <label>終了日</label><button id="prev">◀ 前週</button><input type="date" id="end"><button id="next">次週 ▶</button><button id="latest">最新</button>
 </div>
 <p class="sum" id="sum"></p>
+<hr class="sep">
 <div id="c1" class="chart"></div><p class="note">① 外貨/円の変化率。プラス(橙)=円安、マイナス(青)=円高。マスにマウスを乗せるとレートと変動幅(円)を表示します。</p>
+<hr class="sep">
 <div id="c2" class="chart"></div><p class="note" id="n2"></p>
+<hr class="sep">
 <div id="c3" class="chart"></div><p class="note">③ 全通貨が同じ向きなら「円」そのものの動き、通貨ごとに違えば相手通貨側の事情が大きいことを示します。</p>
 <div id="ratebox">
- <div id="c4" class="chart"></div><p class="note" id="n4"></p>
- <h3 style="font-weight:400">⑤ 日米の金利</h3><div id="c5"></div><p class="note">⑤ 水準は終了日の利回り(%)。変化は期間・1日の変化(bp)。</p>
+ <hr class="sep">
+<div id="c4" class="chart"></div><p class="note" id="n4"></p>
+ <hr class="sep">
+<h3 style="font-weight:400">⑤ 日米の金利</h3><div id="c5"></div><p class="note">⑤ 水準は終了日の利回り(%)。変化は期間・1日の変化(bp)。</p>
 </div>
 __SOURCES__
 <script type="application/json" id="data">__DATA__</script>
