@@ -16,7 +16,6 @@ HTML上で期間(週数)・終了日・フローの種類を切り替えられ�
 """
 import argparse
 import datetime as dt
-import io
 import json
 import os
 import subprocess
@@ -98,80 +97,6 @@ REPS = {
         "XLC": [("META", "Meta"), ("GOOGL", "Alphabet"), ("NFLX", "Netflix")],
     },
 }
-
-
-FX_PAIRS = {
-    "USDJPY=X": "米ドル", "EURJPY=X": "ユーロ", "GBPJPY=X": "英ポンド", "AUDJPY=X": "豪ドル",
-    "NZDJPY=X": "NZドル", "CADJPY=X": "カナダドル", "CHFJPY=X": "スイスフラン",
-}
-FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
-MOF_URL = "https://www.mof.go.jp/jgbs/reference/interest_rate/data/jgbcm_all.csv"
-
-
-def _http(url, timeout=40):
-    import urllib.request
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 market-flow"})
-    return urllib.request.urlopen(req, timeout=timeout).read()
-
-
-def parse_fred(raw):
-    """FRED の fredgraph.csv(日付, 値。欠損は '.')を Series に。"""
-    df = pd.read_csv(io.BytesIO(raw))
-    d = pd.to_datetime(df.iloc[:, 0], errors="coerce")
-    v = pd.to_numeric(df.iloc[:, 1], errors="coerce")
-    return pd.Series(v.values, index=d).dropna().sort_index()
-
-
-def parse_mof(raw, cols=("2年", "10年")):
-    """財務省『国債金利情報』CSV(Shift_JIS、'基準日' を含む行がヘッダ)から指定年限を取り出す。"""
-    text = raw.decode("cp932", errors="replace")
-    lines = text.splitlines()
-    hdr = next(i for i, ln in enumerate(lines) if "基準日" in ln)
-    df = pd.read_csv(io.StringIO("\n".join(lines[hdr:])))
-    df.columns = [str(c).strip() for c in df.columns]
-    d = pd.to_datetime(df.iloc[:, 0], errors="coerce")
-    out = {}
-    for c in cols:
-        if c in df.columns:
-            out[c] = pd.Series(pd.to_numeric(df[c], errors="coerce").values, index=d).dropna().sort_index()
-    return out
-
-
-def load_fx(index, demo=False):
-    """クロス円(外貨/円)の終値。index に ffill で揃える。"""
-    if demo:
-        rng = np.random.default_rng(23)
-        base = dict(zip(FX_PAIRS, (150, 163, 190, 98, 90, 108, 170)))
-        yen = np.cumsum(rng.normal(0.0004, 0.004, len(index)))  # 全通貨に共通する円の動き
-        return pd.DataFrame({t: base[t] * np.exp(yen + np.cumsum(rng.normal(0, 0.003, len(index))))
-                             for t in FX_PAIRS}, index=index)
-    c, _ = load_prices(list(FX_PAIRS))
-    return c.reindex(index.union(c.index)).ffill().reindex(index)
-
-
-def load_rates(index, demo=False):
-    """日米の2年・10年金利(%)。US=FRED(日次), JP=財務省(日次)。取れなかった系列は NaN 列。"""
-    cols = ["US2", "US10", "JP2", "JP10"]
-    if demo:
-        rng = np.random.default_rng(31)
-        lvl = {"US2": 3.8, "US10": 4.2, "JP2": 0.9, "JP10": 1.6}
-        return pd.DataFrame({k: lvl[k] + np.cumsum(rng.normal(0, 0.02, len(index))) for k in cols}, index=index)
-    out = {}
-    for key, sid in (("US2", "DGS2"), ("US10", "DGS10")):
-        try:
-            out[key] = parse_fred(_http(FRED_URL.format(sid)))
-        except Exception as e:  # noqa: BLE001
-            print(f"[warn] FRED {sid} 取得失敗: {type(e).__name__}: {e}")
-    try:
-        jp = parse_mof(_http(MOF_URL))
-        out["JP2"], out["JP10"] = jp.get("2年"), jp.get("10年")
-    except Exception as e:  # noqa: BLE001
-        print(f"[warn] 財務省 国債金利 取得失敗: {type(e).__name__}: {e}")
-    res = pd.DataFrame(np.nan, index=index, columns=cols)
-    for k, ser in out.items():
-        if ser is not None and len(ser):
-            res[k] = ser.reindex(index.union(ser.index)).ffill(limit=7).reindex(index)
-    return res
 
 
 def notify(text):
@@ -302,7 +227,7 @@ def lst(series):
     return [None if pd.isna(x) else round(float(x), 4) for x in series]
 
 
-def build_payload(close, vol, shares, sectors, bench, groups, reps, fx=None, rates=None):
+def build_payload(close, vol, shares, sectors, bench, groups, reps):
     cols = [t for t in [bench, *sectors] if t in close.columns]
     holdings = []
     for g, tickers in groups.items():
@@ -318,10 +243,6 @@ def build_payload(close, vol, shares, sectors, bench, groups, reps, fx=None, rat
         "holdings": holdings,
         "close": {t: lst(close[t]) for t in cols},
         "vol": {t: lst(vol[t]) for t in cols},
-        "fx": None if fx is None else {
-            "names": {t: n for t, n in FX_PAIRS.items() if t in fx.columns and fx[t].notna().any()},
-            "close": {t: lst(fx[t]) for t in fx.columns if fx[t].notna().any()}},
-        "rates": None if rates is None else {k: lst(rates[k]) for k in rates.columns if rates[k].notna().any()},
         "reps": {st: [{"t": t, "name": n} for t, n in lst_ if t in close.columns]
                  for st, lst_ in reps.items()},
         "rclose": {t: lst(close[t]) for lst_ in reps.values() for t, _ in lst_ if t in close.columns},
@@ -330,7 +251,7 @@ def build_payload(close, vol, shares, sectors, bench, groups, reps, fx=None, rat
     }
 
 
-def sources_html(cfg, bench_name, asof, generated, demo, sectors, fx_li=""):
+def sources_html(cfg, bench_name, asof, generated, demo, sectors):
     rows = "".join(f"<tr><td>{t}</td><td>{n}</td></tr>" for t, n in sectors.items())
     demo_note = ("<p class='warn'>※ DEMO: 合成の乱数データです。実際の市場データではありません。</p>"
                  if demo else "")
@@ -341,7 +262,7 @@ def sources_html(cfg, bench_name, asof, generated, demo, sectors, fx_li=""):
 <li><b>株価・売買高</b>: Yahoo Finance(Pythonライブラリ <code>yfinance</code> 経由)。日足、分割・配当調整済みの終値、直近約1年。無料データのため遅延・欠損・訂正があり得ます。</li>
 <li><b>セクター</b>: {cfg['source']}。</li>
 <li><b>代表銘柄</b>(ヒートマップのホバー表示): 各セクターの時価総額上位から手動で3銘柄ずつ選定(<code>market_flow.py</code> の <code>REPS</code>)。ETFの公式な構成銘柄・比率ではありません。株価はYahoo Finance。</li>
-<li><b>ベンチマーク</b>: {bench_name}。</li>{fx_li}
+<li><b>ベンチマーク</b>: {bench_name}。</li>
 <li><b>ETF発行口数</b>: Yahoo Finance(<code>get_shares_full</code> と、実行日ごとのスナップショット)。リポジトリの <code>data/shares_history.csv</code> に蓄積。ETFの口数がYahooで未提供・更新が遅い場合は「近似」に自動で切り替わります。公式値(運用会社・取引所の公表)で補うときはこのCSVに <code>date,ticker,shares</code> で追記してください。</li>
 <li><b>最新データ日</b>: {asof} ／ <b>ページ生成</b>: {generated}</li>
 </ul>
@@ -395,12 +316,6 @@ code{background:#eceff3;padding:1px 4px;border-radius:3px}
 <div id="c4" class="chart"></div><p class="note">④ 大きい点が終了日、線は直近8営業日の軌跡。時計回り(Improving→Leading→Weakening→Lagging)に循環するとされます。</p>
 <div id="hold" style="display:none"><h3 style="font-weight:400">⑤ 保有・監視銘柄</h3><div id="c5"></div></div>
 <div id="c6" class="chart"></div><p class="note" id="n6"></p>
-<div id="fxbox" style="display:none">
- <h3 style="font-weight:400;margin-top:30px">為替・金利</h3><p class="sum" id="fxsum"></p>
- <div id="c7" class="chart"></div><p class="note" id="n7"></p>
- <div id="c8" class="chart"></div><p class="note" id="n8"></p>
- <div id="ratebox"><div id="c9" class="chart"></div><p class="note" id="n9"></p></div>
-</div>
 __SOURCES__
 <script type="application/json" id="data">__DATA__</script>
 <script>
@@ -502,47 +417,7 @@ function render(){
  Plotly.react('c6',ser.map(o=>({type:'scatter',mode:'lines',name:o.x.name,x:D.dates.slice(s0,e+1),y:o.ys.map(v=>v/sc*100),
   hovertemplate:o.x.name+' %{y:.1f}%<extra></extra>'})),
   {...LAY,title:{text:'⑥ 累積フロー推移(直近60営業日)'},yaxis:{title:{text:'累積フロー (全体の|フロー|に対する %)'}},height:520,margin:{l:60,r:20,t:50,b:50}},{displayModeBar:false});
- renderFx(e,a,w,rng);
  $('n6').textContent=`⑥ ${unit}。上昇が続くセクターは資金流入が継続しています。`;
-}
-
-function corr(x,y){const n=x.length;if(n<10)return null;const mx=x.reduce((a,b)=>a+b)/n,my=y.reduce((a,b)=>a+b)/n;
- let sxy=0,sx=0,sy=0;for(let i=0;i<n;i++){sxy+=(x[i]-mx)*(y[i]-my);sx+=(x[i]-mx)**2;sy+=(y[i]-my)**2}return(sx&&sy)?sxy/Math.sqrt(sx*sy):null}
-function renderFx(e,a,w,rng){
- const F=D.fx,R=D.rates,box=$('fxbox');
- if(!F||!Object.keys(F.close).length){box.style.display='none';return}
- box.style.display='';
- const ok=Object.keys(F.close).filter(t=>F.close[t][e]!=null&&F.close[t][a]!=null);
- const chg=ok.map(t=>({t,name:F.names[t],r:pct(F.close[t][e],F.close[t][a]),d:F.close[t][e]-F.close[t][a],last:F.close[t][e]})).sort((x,y)=>y.r-x.r);
- if(!chg.length){$('fxsum').textContent='この期間の為替データがありません';return}
- const avg=chg.reduce((s,x)=>s+x.r,0)/chg.length,rv=[...chg].reverse();
- $('fxsum').innerHTML=`円は主要${chg.length}通貨に対し平均 <b>${Math.abs(avg).toFixed(2)}% ${avg>=0?'円安':'円高'}</b>(${rng})　最も円安: <b>${chg[0].name}</b> ${fmt(chg[0].r,2)}　${chg[chg.length-1].r<0?'最も円高':'円安が最小'}: <b>${chg[chg.length-1].name}</b> ${fmt(chg[chg.length-1].r,2)}`;
- Plotly.react('c7',[{type:'bar',orientation:'h',x:rv.map(x=>x.r),y:rv.map(x=>x.name+'/円'),marker:{color:rv.map(x=>x.r>=0?'#f4a261':'#457b9d')},
-  customdata:rv.map(x=>[x.last.toFixed(2),(x.d>=0?'+':'')+x.d.toFixed(2)]),
-  hovertemplate:'%{y}<br>%{x:.2f}%<br>%{customdata[0]}円(%{customdata[1]}円)<extra></extra>'}],
-  {...LAY,title:{text:'⑦ クロス円の変化率(右=円安 / 左=円高)'},xaxis:{title:{text:'変化率 (%)'}},height:100+36*chg.length},{displayModeBar:false});
- $('n7').textContent=`⑦ ${rng}。外貨/円が上昇=円安、下落=円高。`;
- const xs=D.dates.slice(a,e+1),base=t=>F.close[t][a];
- const tr=ok.map(t=>({type:'scatter',mode:'lines',name:F.names[t],x:xs,y:xs.map((_,k)=>{const v=F.close[t][a+k];return(v==null||!base(t))?null:v/base(t)*100}),
-  hovertemplate:F.names[t]+' %{y:.2f}<extra></extra>'}));
- tr.push({type:'scatter',mode:'lines',name:'円全体(平均)',line:{color:'#111',width:4,dash:'dash'},x:xs,
-  y:xs.map((_,k)=>{let s=0,n=0;ok.forEach(t=>{const v=F.close[t][a+k];if(v!=null&&base(t)){s+=v/base(t)*100;n++}});return n?s/n:null})});
- Plotly.react('c8',tr,{...LAY,title:{text:'⑧ 円の強弱(期間開始=100・上=円安)'},height:460,margin:{l:60,r:20,t:50,b:50}},{displayModeBar:false});
- $('n8').textContent='⑧ 全通貨が同じ向きなら「円」そのものの動き、通貨ごとに違えば相手通貨側の事情が大きいことを示します。';
- const U=F.close['USDJPY=X'],rb=$('ratebox');
- if(!(R&&R.US10&&R.JP10&&U)){rb.style.display='none';return}
- rb.style.display='';
- const s0=Math.max(0,e-249),sp=(x,y)=>D.dates.map((_,i)=>(x[i]==null||y[i]==null)?null:x[i]-y[i]),
-  s10=sp(R.US10,R.JP10),s2=(R.US2&&R.JP2)?sp(R.US2,R.JP2):null,X=D.dates.slice(s0,e+1);
- const t9=[{type:'scatter',mode:'lines',name:'ドル円(左軸)',x:X,y:U.slice(s0,e+1),line:{color:'#111'},yaxis:'y',connectgaps:true},
-  {type:'scatter',mode:'lines',name:'日米10年金利差(右軸)',x:X,y:s10.slice(s0,e+1),line:{color:'#e76f51'},yaxis:'y2',connectgaps:true}];
- if(s2)t9.push({type:'scatter',mode:'lines',name:'日米2年金利差(右軸)',x:X,y:s2.slice(s0,e+1),line:{color:'#2a9d8f',dash:'dot'},yaxis:'y2',connectgaps:true});
- Plotly.react('c9',t9,{...LAY,title:{text:'⑨ 日米金利差とドル円(直近約1年)'},height:480,margin:{l:60,r:60,t:50,b:70},
-  yaxis:{title:{text:'ドル円(円)'}},yaxis2:{title:{text:'金利差 (%pt)'},overlaying:'y',side:'right',showgrid:false,tickformat:'.2f'},legend:{orientation:'h',y:-0.15}},{displayModeBar:false});
- const d10=(s10[e]!=null&&s10[a]!=null)?(s10[e]-s10[a])*100:null,xa=[],ya=[];
- for(let i=Math.max(1,e-59);i<=e;i++)if(s10[i]!=null&&s10[i-1]!=null&&U[i]!=null&&U[i-1]!=null){xa.push(s10[i]-s10[i-1]);ya.push(U[i]-U[i-1])}
- const r=corr(xa,ya);
- $('n9').textContent=`⑨ 日米10年金利差 ${s10[e]==null?'-':s10[e].toFixed(2)+'%pt'}(${rng}で${d10==null?'-':(d10>=0?'+':'')+d10.toFixed(0)}bp)。金利差の拡大はドル高・円安要因とされますが、常に連動するわけではありません。直近60日の日次変化の相関: ${r==null?'-':r.toFixed(2)}`;
 }
 
 // ── controls ──
@@ -568,7 +443,6 @@ def main():
     ap.add_argument("--no-holdings", action="store_true", help="保有・監視銘柄の表を出さない")
     ap.add_argument("--notify", action="store_true", help="要約を Slack/Discord Webhook に送る")
     ap.add_argument("--offline", action="store_true", help="plotly.js をHTMLに埋め込む(CDN不要)")
-    ap.add_argument("--no-fx", action="store_true", help="為替・金利のセクションを出さない")
     ap.add_argument("--shares-store", default="data/shares_history.csv", help="ETF口数の履歴CSV")
     ap.add_argument("-o", "--output", default="market_flow.html")
     a = ap.parse_args()
@@ -592,16 +466,12 @@ def main():
     shares = load_shares([t for t in sectors if t in close.columns], close.index,
                          a.shares_store, demo=a.demo, close=close)
 
-    fx = rates = None
-    if a.market == "jp" and not a.no_fx:
-        fx = load_fx(close.index, demo=a.demo)
-        rates = load_rates(close.index, demo=a.demo)
     fl = flows(close, vol, shares, sectors, a.window)
     mode, top_in, top_out = summary(fl)
     asof = close.index[-1].date()
     generated = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).strftime("%Y-%m-%d %H:%M JST")
 
-    payload = build_payload(close, vol, shares, sectors, bench, groups, reps, fx, rates)
+    payload = build_payload(close, vol, shares, sectors, bench, groups, reps)
     n_sh = sum(v is not None for v in payload["shares"].values())
     meta = {"weeks": max(1, round(a.window / 5)), "cur": "JPY" if a.market == "jp" else "USD",
             "label": f"({a.market.upper()}{' / DEMO' if a.demo else ''})",
@@ -610,15 +480,9 @@ def main():
     if a.offline:
         from plotly.offline import get_plotlyjs
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
-    fx_li = ""
-    if fx is not None:
-        fx_li = ("<li><b>為替(クロス円)</b>: Yahoo Finance(例: <code>USDJPY=X</code>)の日足終値。</li>"
-                 "<li><b>金利</b>: 米国債2年・10年 = FRED(セントルイス連銀 DGS2/DGS10、日次)、"
-                 "日本国債2年・10年 = 財務省『国債金利情報』(日次CSV)。ユーロ・豪ドルなど他通貨の金利差は、"
-                 "日次で取れる無料の出典が無いため未対応です。</li>")
     data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
     html = (PAGE.replace("__PLOTLY__", plotly_tag)
-            .replace("__SOURCES__", sources_html(cfg, bench_name, asof, generated, a.demo, sectors, fx_li))
+            .replace("__SOURCES__", sources_html(cfg, bench_name, asof, generated, a.demo, sectors))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))
             .replace("__DATA__", data_json))
     os.makedirs(os.path.dirname(os.path.abspath(a.output)), exist_ok=True)
@@ -626,17 +490,9 @@ def main():
         fh.write(html)
 
     label = "実フロー" if mode == "actual" else "近似フロー"
-    fx_line = ""
-    if fx is not None and fx.notna().any().any() and len(fx) > a.window:
-        ch = (fx.iloc[-1] / fx.iloc[-1 - a.window] - 1) * 100
-        avg = ch.mean()
-        fx_line = f"\n円: 主要通貨に対し平均{abs(avg):.2f}%{'円安' if avg >= 0 else '円高'}"
-        if rates is not None and rates[["US10", "JP10"]].notna().all(axis=1).any():
-            sp = (rates["US10"] - rates["JP10"]).dropna()
-            fx_line += f" / 日米10年金利差 {sp.iloc[-1]:.2f}%pt"
     if a.notify:
         notify(f"[セクター資金フロー {a.market.upper()} {asof} / {label}]\n"
-               f"流入: {' / '.join(top_in)}\n流出: {' / '.join(top_out)}{fx_line}")
+               f"流入: {' / '.join(top_in)}\n流出: {' / '.join(top_out)}")
     print(f"口数データ: {n_sh}/{len(payload['shares'])}業種 → {label}")
     print(f"流入上位: {top_in}\n流出上位: {top_out}\n出力: {a.output}")
 
