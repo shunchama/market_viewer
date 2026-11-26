@@ -311,7 +311,7 @@ function metrics(){
 function render(){
  const m=metrics(),{rows,mode,a,e,w}=m,unit=mode==='actual'?'実フロー(口数増減×終値)':'近似フロー(値上がり率×売買代金)';
  const rng=`${D.dates[a]} → ${D.dates[e]}(${w}営業日)`;
- $('asof').textContent=`終了日 ${D.dates[e]} ／ 最新データ ${D.dates[N-1]}`;
+ $('asof').textContent=`最終更新 ${META.generated} ／ 最新データ ${D.dates[N-1]} ／ 表示中の終了日 ${D.dates[e]}`;
  const srt=rows.filter(r=>r.pct!=null).sort((x,y)=>y.pct-x.pct);
  $('sum').innerHTML=srt.length?`流入上位: <b>${srt.slice(0,3).map(r=>r.name).join(' / ')}</b>　流出上位: <b>${srt.slice(-3).reverse().map(r=>r.name).join(' / ')}</b>`:'フローを計算できるデータがありません';
  $('modenote').textContent=`集計期間 ${rng}｜${unit}`+(m.missing?`｜口数データが無い${m.missing}業種は除外`:'')+(mode==='proxy'&&st.mode==='auto'?'｜口数データが不足しているため近似を使用中':'');
@@ -427,7 +427,8 @@ def main():
     payload = build_payload(close, vol, shares, sectors, bench, groups)
     n_sh = sum(v is not None for v in payload["shares"].values())
     meta = {"weeks": max(1, round(a.window / 5)), "cur": "JPY" if a.market == "jp" else "USD",
-            "label": f"({a.market.upper()}{' / DEMO' if a.demo else ''})"}
+            "label": f"({a.market.upper()}{' / DEMO' if a.demo else ''})",
+            "generated": generated}
     plotly_tag = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>'
     if a.offline:
         from plotly.offline import get_plotlyjs
