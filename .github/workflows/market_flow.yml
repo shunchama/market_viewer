@@ -30,4 +30,5 @@ jobs:
           git config user.email "actions@github.com"
           git add docs data
           git diff --cached --quiet || git commit -m "Update market flow report"
+          git pull --rebase origin main || true
           git push

@@ -71,6 +71,25 @@ def parse_treasury(raw):
             for c, k in (("2 Yr", "US2"), ("10 Yr", "US10")) if c in df.columns}
 
 
+def parse_jp_dates(col):
+    """財務省CSVの日付。和暦(S49.9.24 / H31.4.30 / R元.5.1 / R8.11.25)と西暦(2026/11/25)の両方に対応。"""
+    s = col.astype(str).str.strip()
+    m = s.str.extract(r"^([SHR])\s*(\d+|元)\.(\d+)\.(\d+)$")
+    out = pd.Series(pd.NaT, index=s.index, dtype="datetime64[ns]")
+    ok = m[0].notna()
+    if ok.any():
+        yr = m.loc[ok, 1].replace("元", "1").astype(int) + m.loc[ok, 0].map({"S": 1925, "H": 1988, "R": 2018})
+        out.loc[ok] = pd.to_datetime(pd.DataFrame({"year": yr, "month": m.loc[ok, 2].astype(int),
+                                                   "day": m.loc[ok, 3].astype(int)}), errors="coerce")
+    rest = ~ok
+    if rest.any():
+        try:
+            out.loc[rest] = pd.to_datetime(s[rest], format="mixed", errors="coerce")
+        except (TypeError, ValueError):
+            out.loc[rest] = pd.to_datetime(s[rest], errors="coerce")
+    return out
+
+
 def parse_mof(raw, cols=("2年", "10年")):
     """財務省『国債金利情報』CSV(Shift_JIS、'基準日' を含む行がヘッダ)から指定年限を取り出す。"""
     text = raw.decode("cp932", errors="replace")
@@ -78,7 +97,9 @@ def parse_mof(raw, cols=("2年", "10年")):
     hdr = next(i for i, ln in enumerate(lines) if "基準日" in ln)
     df = pd.read_csv(io.StringIO("\n".join(lines[hdr:])))
     df.columns = [str(c).strip() for c in df.columns]
-    d = pd.to_datetime(df.iloc[:, 0], errors="coerce")
+    d = parse_jp_dates(df.iloc[:, 0])
+    if d.notna().sum() == 0:
+        print(f"[warn] 財務省CSVの日付を解釈できません。先頭の値: {df.iloc[:3, 0].tolist()}")
     out = {}
     for c in cols:
         if c in df.columns:
@@ -109,24 +130,28 @@ def load_rates(index, demo=False):
         lvl = {"US2": 3.8, "US10": 4.2, "JP2": 0.9, "JP10": 1.6}
         return pd.DataFrame({k: lvl[k] + np.cumsum(rng.normal(0, 0.02, len(index))) for k in cols}, index=index)
     out = {}
-    for key, sid in (("US2", "DGS2"), ("US10", "DGS10")):
+    try:  # 米財務省の公式CSV(日次)。去年+今年。
+        year = dt.date.today().year
+        parts = [parse_treasury(_http(TREASURY_URL.format(y=y), timeout=30, tries=2)) for y in (year - 1, year)]
+        for k in ("US2", "US10"):
+            ser = _clean(pd.concat([p[k] for p in parts if k in p])) if any(k in p for p in parts) else None
+            if ser is not None and len(ser):
+                out[k] = ser
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] 米財務省CSV 取得失敗: {type(e).__name__}: {e}")
+    for key, sid in (("US2", "DGS2"), ("US10", "DGS10")):  # 取れなかった分だけ FRED で補う
+        if key in out:
+            continue
         try:
-            out[key] = parse_fred(_http(FRED_URL.format(sid), timeout=40, tries=2))
+            out[key] = parse_fred(_http(FRED_URL.format(sid), timeout=20, tries=1))
         except Exception as e:  # noqa: BLE001
             print(f"[warn] FRED {sid} 取得失敗: {type(e).__name__}: {e}")
-    if not all(k in out and len(out[k]) for k in ("US2", "US10")):
-        print("[info] 米財務省の公式CSVで補完します")
-        try:
-            year = dt.date.today().year
-            parts = [parse_treasury(_http(TREASURY_URL.format(y=y))) for y in (year - 1, year)]
-            for k in ("US2", "US10"):
-                if k not in out or not len(out[k]):
-                    out[k] = _clean(pd.concat([p[k] for p in parts if k in p]))
-        except Exception as e:  # noqa: BLE001
-            print(f"[warn] 米財務省CSV 取得失敗: {type(e).__name__}: {e}")
     try:
         jp = parse_mof(_http(MOF_URL))
         out["JP2"], out["JP10"] = jp.get("2年"), jp.get("10年")
+        for k in ("JP2", "JP10"):
+            if out[k] is not None and len(out[k]):
+                print(f"[info] 日本国債 {k}: {len(out[k])}行, 最新 {out[k].index[-1].date()}")
     except Exception as e:  # noqa: BLE001
         print(f"[warn] 財務省 国債金利 取得失敗: {type(e).__name__}: {e}")
     res = pd.DataFrame(np.nan, index=index, columns=cols)
