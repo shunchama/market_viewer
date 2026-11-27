@@ -143,7 +143,7 @@ def last_span(tickers):
 
 def nav_html(active):
     """ページ間ナビ(index.html=日本株, us.html=米国株, fx.html=為替)。公開フォルダ内の相対リンク。"""
-    items = (("index.html", "株式(日本)", "jp"), ("us.html", "株式(米国)", "us"), ("fx.html", "為替", "fx"))
+    items = (("index.html", "株式(日本)", "jp"), ("us.html", "株式(米国)", "us"), ("fx.html", "為替", "fx"), ("pro.html", "プロ指標", "pro"))
     links = "".join(f'<a href="{h}"{" class=on" if k == active else ""}>{n}</a>' for h, n, k in items)
     return ("<style>.nav{display:flex;gap:6px;padding-top:14px}.nav a{padding:5px 14px;border:1px solid #bbb;"
             "border-radius:999px;text-decoration:none;color:#264653;font-size:14px}"
@@ -164,7 +164,7 @@ def notify(text):
 
 
 # ───────────────────────── データ取得 ─────────────────────────
-def load_prices(tickers, demo=False):
+def load_prices(tickers, demo=False, period="1y"):
     """(close, volume) の DataFrame を返す。"""
     if demo:
         rng = np.random.default_rng(7)
@@ -184,7 +184,7 @@ def load_prices(tickers, demo=False):
     import time
     import yfinance as yf
     # threads=False: 並列取得だとキャッシュDBが "database is locked" になることがある
-    df = yf.download(list(tickers), period="1y", auto_adjust=True, progress=False, threads=False)
+    df = yf.download(list(tickers), period=period, auto_adjust=True, progress=False, threads=False)
     close = df["Close"].copy()
     vol = df["Volume"].copy()
     # 取得に失敗した銘柄は1本ずつリトライ
@@ -193,7 +193,7 @@ def load_prices(tickers, demo=False):
             if t in close.columns and close[t].notna().any():
                 break
             time.sleep(1 + attempt)
-            one = yf.download(t, period="1y", auto_adjust=True, progress=False, threads=False)
+            one = yf.download(t, period=period, auto_adjust=True, progress=False, threads=False)
             if not one.empty:
                 c, v = one["Close"], one["Volume"]
                 close[t] = (c.iloc[:, 0] if hasattr(c, "columns") else c).reindex(close.index)

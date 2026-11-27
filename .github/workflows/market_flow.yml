@@ -27,6 +27,9 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python fx_flow.py --nav --notify -o docs/fx.html
+      - name: pro indicators page (失敗しても他のページの更新は続ける)
+        continue-on-error: true
+        run: python pro_flow.py --nav -o docs/pro.html
       - name: publish
         run: |
           git config user.name "github-actions"
