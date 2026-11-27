@@ -171,8 +171,8 @@ html[data-theme=dark] table.h th,html[data-theme=dark] table.h td,html[data-them
 THEME_BODY = """<button id="themeBtn" type="button" title="明るい表示 / 暗い表示を切り替え" aria-label="表示の切り替え"></button>
 <script>
 const TH=()=>document.documentElement.getAttribute('data-theme')==='dark';
-const PLT=()=>TH()?{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#202730',font:{color:'#d5dbe3'},template:{layout:{
- xaxis:{gridcolor:'#3e4957',linecolor:'#46515f',zerolinecolor:'#46515f'},yaxis:{gridcolor:'#3e4957',linecolor:'#46515f',zerolinecolor:'#46515f'}}}}:{};
+const PLT=()=>{const d=TH(),g=d?'#42505f':'#bcc6d3',ln=d?'#6b7889':'#7f8b9b',ax={gridcolor:g,linecolor:ln,zerolinecolor:ln,showline:true,mirror:true,linewidth:1};
+ return d?{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#202730',font:{color:'#d5dbe3'},template:{layout:{xaxis:ax,yaxis:ax}}}:{plot_bgcolor:'#f6f8fb',template:{layout:{xaxis:ax,yaxis:ax}}}};
 (function(){var b=document.getElementById('themeBtn');var set=function(){b.textContent=TH()?'☀️':'🌙'};set();
  b.onclick=function(){var t=TH()?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('theme',t)}catch(e){}set();if(typeof render==='function')render()}})();
 </script>
@@ -579,9 +579,9 @@ function render(){
  const hv=h.map((row,i)=>PN.map((n,k)=>{const lines=(D.reps[row.t]||[]).map(r=>{const c=D.rclose[r.t];if(!c)return null;const x=c[e],y=c[e-n];
    return(x==null||y==null||!y)?null:`${r.name}  ${fmt((x/y-1)*100,2)}(${money(x-y)})`}).filter(Boolean);
   return`<b>${row.name}</b>  ${cols[k]}: ${fmt(z[i][k],2)}`+(lines.length?'<br>代表銘柄:<br>'+lines.join('<br>'):'')}));
- Plotly.react('c1',[{type:'heatmap',z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?9:11},colorscale:TH()?[[0,'#c0392b'],[0.25,'#7d3b36'],[0.5,'#2d343e'],[0.75,'#2f6f52'],[1,'#27ae60']]:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
+ Plotly.react('c1',[{type:'heatmap',xgap:2,ygap:2,z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?9:11},colorscale:TH()?[[0,'#c0392b'],[0.25,'#7d3b36'],[0.5,'#2d343e'],[0.75,'#2f6f52'],[1,'#27ae60']]:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
   text:z.map(rw=>rw.map(v=>v==null?'':v.toFixed(1)+'%')),texttemplate:'%{text}',hovertext:hv,hovertemplate:'%{hovertext}<extra></extra>'}],
-  {...L(),title:T('① セクター別騰落率'),height:80+28*h.length,yaxis:{autorange:'reversed'}},CFG);
+  {...L(),plot_bgcolor:TH()?'#5a6573':'#8f9bab',title:T('① セクター別騰落率'),height:80+28*h.length,yaxis:{autorange:'reversed'}},CFG);
 
  // ② flow bars
  const f=[...srt].reverse();

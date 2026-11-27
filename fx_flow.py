@@ -292,9 +292,9 @@ function render(){
  const PN=[1,5,21,63],cols=['1日','1週','1ヶ月','3ヶ月'],z=chg.map(c=>PN.map(n=>pct(F[c.t][e],F[c.t][e-n])));
  const lim=Math.max(1,...z.flat().filter(v=>v!=null).map(Math.abs));
  const hv=chg.map((c,i)=>PN.map((n,k)=>{const y=F[c.t][e-n],x=F[c.t][e];return`<b>${c.name}/円</b>  ${cols[k]}: ${fmt(z[i][k],2)}<br>${x==null?'-':x.toFixed(2)}円(${(x==null||y==null)?'-':yen(x-y)})`}));
- Plotly.react('c1',[{type:'heatmap',z,x:cols,y:chg.map(c=>c.name+'/円'),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?10:11},colorscale:COL(),
+ Plotly.react('c1',[{type:'heatmap',xgap:2,ygap:2,z,x:cols,y:chg.map(c=>c.name+'/円'),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?10:11},colorscale:COL(),
   text:z.map(r=>r.map(v=>v==null?'':v.toFixed(2)+'%')),texttemplate:'%{text}',hovertext:hv,hovertemplate:'%{hovertext}<extra></extra>'}],
-  {...L(),title:T('① クロス円の変化率(橙=円安 / 青=円高)'),height:100+40*chg.length,yaxis:{autorange:'reversed'}},CFG);
+  {...L(),plot_bgcolor:TH()?'#5a6573':'#8f9bab',title:T('① クロス円の変化率(橙=円安 / 青=円高)'),height:100+40*chg.length,yaxis:{autorange:'reversed'}},CFG);
 
  // ② bars (selected window)
  const rv=[...chg].reverse();
