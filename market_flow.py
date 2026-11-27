@@ -161,6 +161,9 @@ THEME_HEAD = """<script>(function(){try{var t=localStorage.getItem('theme');if(!
 [data-theme=dark] .yes{color:#5fd08c}[data-theme=dark] .no{color:#ff8a78}
 [data-theme=dark] h3.sec{background:#2a6f7f}
 [data-theme=dark] .nav a{color:#9fd0dc;border-color:#3a4350}[data-theme=dark] .nav a.on{background:#3b7f91;border-color:#3b7f91;color:#fff}
+/* 表の罫線: 縦横ともにはっきり見える色にする(ページ側の薄い罫線より優先) */
+html table.h th,html table.h td,html table.mini th,html table.mini td,html .asof th,html .asof td{border:1px solid #bcc6d2}
+html[data-theme=dark] table.h th,html[data-theme=dark] table.h td,html[data-theme=dark] table.mini th,html[data-theme=dark] table.mini td,html[data-theme=dark] .asof th,html[data-theme=dark] .asof td{border-color:#4d5866}
 #themeBtn{position:fixed;right:12px;bottom:12px;z-index:20;width:42px;height:42px;border-radius:50%;border:1px solid #9aa4ae;background:#fffffff0;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 2px 8px #0003;padding:0}
 [data-theme=dark] #themeBtn{background:#262d37;border-color:#3a4350}
 </style>"""
@@ -169,7 +172,7 @@ THEME_BODY = """<button id="themeBtn" type="button" title="明るい表示 / 暗
 <script>
 const TH=()=>document.documentElement.getAttribute('data-theme')==='dark';
 const PLT=()=>TH()?{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#202730',font:{color:'#d5dbe3'},template:{layout:{
- xaxis:{gridcolor:'#303a46',linecolor:'#46515f',zerolinecolor:'#46515f'},yaxis:{gridcolor:'#303a46',linecolor:'#46515f',zerolinecolor:'#46515f'}}}}:{};
+ xaxis:{gridcolor:'#3e4957',linecolor:'#46515f',zerolinecolor:'#46515f'},yaxis:{gridcolor:'#3e4957',linecolor:'#46515f',zerolinecolor:'#46515f'}}}}:{};
 (function(){var b=document.getElementById('themeBtn');var set=function(){b.textContent=TH()?'☀️':'🌙'};set();
  b.onclick=function(){var t=TH()?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('theme',t)}catch(e){}set();if(typeof render==='function')render()}})();
 </script>
