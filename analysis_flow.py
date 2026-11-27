@@ -1,13 +1,13 @@
-"""プロ指標ページ: 機関投資家・クオンツが見る指標を無料データでまとめる
+"""分析ページ: 機関投資家・クオンツが見る指標を無料データでまとめる
 
   A. セクターの強弱   12-1か月モメンタム順位 / Zスコア / 50日・200日線(業種単位のブレッドス)
   B. ボラティリティ   VIXの期間構造(VIX/VIX3M) / VIX − 実現ボラティリティ
   C. 金利・クレジット 米10年−2年、ハイイールド・スプレッド、米実質金利、ドル指数、銅/金比率
   D. ポジション       CFTC COT(円ほか主要通貨の投機筋の買い越し・売り越し)
 
-  python pro_flow.py                 # pro.html を出力
-  python pro_flow.py --demo          # 合成データで動作確認(ネット不要)
-  python pro_flow.py --nav           # 他ページへのナビを付ける(公開用)
+  python analysis_flow.py            # analysis.html を出力
+  python analysis_flow.py --demo          # 合成データで動作確認(ネット不要)
+  python analysis_flow.py --nav           # 他ページへのナビを付ける(公開用)
 
 データ: 株価・指数=Yahoo Finance / 米国債=米財務省 / HYスプレッド=FRED / COT=CFTC。
 取得できない系列は、そのグラフだけ非表示になる(ページ全体は壊れない)。
@@ -26,7 +26,8 @@ from fx_flow import FRED_URL, _clean, _http, parse_fred
 from market_flow import MARKETS, asof_html, date_str, last_span, lst, nav_html
 
 MACRO = {"^VIX": "VIX", "^VIX3M": "VIX3M(3か月)", "^VIX9D": "VIX9D(9日)", "^GSPC": "S&P500", "^N225": "日経平均",
-         "DX-Y.NYB": "ドル指数", "HG=F": "銅先物", "GC=F": "金先物"}
+         "DX-Y.NYB": "ドル指数", "HG=F": "銅先物", "GC=F": "金先物",
+         "HYG": "ハイイールド債ETF", "IEF": "米国債7-10年ETF"}
 TREASURY_TMPL = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
                  "daily-treasury-rates.csv/{y}/all?type={kind}&field_tdr_date_value={y}&page&_format=csv")
 COT_URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"   # Legacy - Futures Only
@@ -106,7 +107,8 @@ def demo_macro():
     vix = mean_rev(18, 1.1)
     df = pd.DataFrame({"^VIX": vix, "^VIX3M": vix * 0.07 + 0.93 * mean_rev(19.5, 0.6), "^VIX9D": vix * 0.8 + mean_rev(4, 0.5),
                        "^GSPC": walk(5800, 0.009), "^N225": walk(38000, 0.011), "DX-Y.NYB": walk(104, 0.003),
-                       "HG=F": walk(4.2, 0.012), "GC=F": walk(2600, 0.008)}, index=idx).round(3)
+                       "HG=F": walk(4.2, 0.012), "GC=F": walk(2600, 0.008),
+                       "HYG": walk(78, 0.002), "IEF": walk(95, 0.003)}, index=idx).round(3)
     mf.LAST_VALID.update({t: idx[-1] for t in df.columns})
     return df
 
@@ -139,7 +141,7 @@ def sources_html(asof, generated, demo, notes):
 <ul>
 <li><b>株価・指数・先物</b>: Yahoo Finance(<code>yfinance</code> 経由)。セクターは NEXT FUNDS TOPIX-17 ETF(1617〜1633)と Select Sector SPDR、VIX系は <code>^VIX</code> <code>^VIX3M</code> <code>^VIX9D</code>、ドル指数 <code>DX-Y.NYB</code>、銅 <code>HG=F</code>、金 <code>GC=F</code>。無料データのため遅延・欠損があります。</li>
 <li><b>米国債(2年・10年・実質10年)</b>: 米財務省『Daily Treasury Par Yield Curve / Real Yield Curve Rates』(日次CSV)。</li>
-<li><b>ハイイールド・スプレッド</b>: FRED(セントルイス連銀)系列 <code>BAMLH0A0HYM2</code>(ICE BofA 米国ハイイールド債 OAS)。</li>
+<li><b>ハイイールド・スプレッド</b>: FRED(セントルイス連銀)系列 <code>BAMLH0A0HYM2</code>(ICE BofA 米国ハイイールド債 OAS)。FREDから取れないときは、Yahoo Finance の <code>HYG</code> ÷ <code>IEF</code> の比で代用します。</li>
 <li><b>COT</b>: 米商品先物取引委員会(CFTC)Commitments of Traders(Legacy・先物のみ)。基準日は火曜日、公表は通常その週の金曜日で、<b>3日ほど遅れて</b>出ます。</li>
 <li><b>最新データ日</b>: {asof} ／ <b>ページ生成</b>: {generated}</li>
 </ul>
@@ -158,7 +160,7 @@ def sources_html(asof, generated, demo, notes):
 
 PAGE = r"""<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pro Indicators</title>
+<title>Analysis</title>
 __PLOTLY__
 <style>
 body{font-family:-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;max-width:1040px;margin:auto;padding:0 12px 60px;color:#222}
@@ -183,7 +185,7 @@ code{background:#eceff3;padding:1px 4px;border-radius:3px}
 }
 </style></head><body>
 __NAV__
-<h2>プロ指標 <small id="mk"></small></h2>
+<h2>分析 <small id="mk"></small></h2>
 <p class="sub" id="asof"></p>
 __ASOF__
 <div class="ctl"><label>時系列の表示期間</label><span id="mon"></span><label>　セクター</label><span id="mkt"></span></div>
@@ -201,7 +203,7 @@ __ASOF__
 
 <h3 class="sec">C. 金利・クレジット・ドル</h3>
 <hr class="sep"><p class="note">⑥ 米国の10年−2年金利差。マイナス(逆イールド)は景気後退の先行指標とされます。</p><div id="c1" class="chart"></div>
-<hr class="sep"><p class="note">⑦ 米国ハイイールド債のスプレッド(国債との利回り差)。上昇は信用不安・リスクオフのサインです。</p><div id="c2" class="chart"></div>
+<hr class="sep"><p class="note">⑦ 米国ハイイールド債のスプレッド(国債との利回り差)。上昇は信用不安・リスクオフのサインです。FREDから取得できないときは、ハイイールド債ETF(HYG)÷米国債ETF(IEF)の比で代用し、こちらは<b>下落がリスクオフ</b>のサインです。</p><div id="c2" class="chart"></div>
 <hr class="sep"><p class="note">⑧ 米国10年の実質金利(物価上昇を除いた金利)。上昇は株式のバリュエーションや金には逆風とされます。</p><div id="c3" class="chart"></div>
 <hr class="sep"><p class="note">⑨ ドル指数(主要通貨に対するドルの強さ)。</p><div id="c4" class="chart"></div>
 <hr class="sep"><p class="note">⑩ 銅/金比率(銅先物 ÷ 金先物 × 1000)。景気に敏感な銅と安全資産の金の比で、上昇は景気拡大・長期金利上昇と連動しやすいとされます。</p><div id="c5" class="chart"></div>
@@ -299,7 +301,9 @@ function renderC(){
   const l=lastOf(s.d,s.v);dtl(id,[[s.src||'',l&&l.date]]);return l};
  const S=D.series,res={};
  res.curve=one('c1','⑥ 米10年−2年金利差(%pt)',S.T10Y2Y,'米財務省',{zero:true});
- res.hy=one('c2','⑦ 米ハイイールド・スプレッド(%)',S.HY,'FRED');
+ const hyg=mc('HYG'),ief=mc('IEF');res.hyReal=!!(S.HY&&S.HY.v.some(x=>x!=null));
+ res.hy=res.hyReal?one('c2','⑦ 米ハイイールド・スプレッド(%)',S.HY,'FRED'):
+  one('c2','⑦ ハイイールド債÷国債(HYG/IEF・スプレッドの代用)',(hyg&&ief)?{d:MC.dates,v:MC.dates.map((_,i)=>(hyg[i]!=null&&ief[i])?hyg[i]/ief[i]*100:null),src:'HYG・IEF'}:null,'FRED/Yahoo Finance');
  res.real=one('c3','⑧ 米10年実質金利(%)',S.REAL10,'米財務省',{zero:true});
  const dts=MC.dates,dx=mc('DX-Y.NYB'),cu=mc('HG=F'),au=mc('GC=F');
  res.dx=one('c4','⑨ ドル指数',dx?{d:dts,v:dx,src:'ドル指数'}:null,'Yahoo Finance');
@@ -328,7 +332,7 @@ function render(){
  renderA();const b=renderB()||{},c=renderC(),d=renderD(),parts=[];
  if(b.vix)parts.push(`VIX <b>${b.vix.val.toFixed(1)}</b>${b.ratio?`(期先比 ${b.ratio.val.toFixed(2)}・${b.ratio.val>1?'<span class="no">期近が高い=ストレス</span>':'平常'})`:''}`);
  if(c.curve)parts.push(`米10年−2年 <b>${c.curve.val>=0?'+':''}${c.curve.val.toFixed(2)}%pt</b>${c.curve.val<0?'(逆イールド)':''}`);
- if(c.hy)parts.push(`HYスプレッド <b>${c.hy.val.toFixed(2)}%</b>`);
+ if(c.hy)parts.push(c.hyReal?`HYスプレッド <b>${c.hy.val.toFixed(2)}%</b>`:`HYG/IEF比 <b>${c.hy.val.toFixed(1)}</b>(スプレッド代用)`);
  if(c.real)parts.push(`米10年実質金利 <b>${c.real.val.toFixed(2)}%</b>`);
  if(d)parts.push(`円の投機筋 <b>${d.net>=0?'買い越し(円高方向)':'売り越し(円安方向)'} ${Math.abs(d.net).toLocaleString()}枚</b>(2年で${d.p==null?'-':d.p.toFixed(0)}%位・${d.date})`);
  $('sum').innerHTML=parts.length?parts.join(' ／ '):'取得できた指標がありません';
@@ -346,7 +350,7 @@ def main():
     ap.add_argument("--demo", action="store_true", help="合成データで実行")
     ap.add_argument("--nav", action="store_true", help="ページ間ナビを表示(公開用)")
     ap.add_argument("--offline", action="store_true", help="plotly.js をHTMLに埋め込む(CDN不要)")
-    ap.add_argument("-o", "--output", default="pro.html")
+    ap.add_argument("-o", "--output", default="analysis.html")
     a = ap.parse_args()
     notes = []
 
@@ -394,7 +398,10 @@ def main():
         sp[k] = {"d": [x.strftime("%Y-%m-%d") for x in s.index], "v": [round(float(v), 4) for v in s.values], "src": src.get(k, "")}
         rows.append(({"T10Y2Y": "米10年−2年", "HY": "ハイイールド・スプレッド", "REAL10": "米10年実質金利"}[k], s.index[-1], f"出典: {src.get(k, '')}"))
     for k, nm in (("T10Y2Y", "米10年−2年"), ("REAL10", "米10年実質金利"), ("HY", "ハイイールド・スプレッド")):
-        if k not in series:
+        if k not in series and k == "HY":
+            d_h, n_h = last_span(["HYG", "IEF"])
+            rows.append(("ハイイールド(HYG÷IEFで代用)", d_h, "FREDから取得できず、ETFの比で代用。" + n_h))
+        elif k not in series:
             rows.append((nm, None, "取得できず(この図は非表示)"))
 
     cot = demo_cot() if a.demo else safe("COT(CFTC)", fetch_cot, notes)
@@ -417,7 +424,7 @@ def main():
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
     meta = {"generated": generated, "label": "(DEMO)" if a.demo else ""}
     html = (PAGE.replace("__PLOTLY__", plotly_tag)
-            .replace("__NAV__", nav_html("pro") if a.nav else "")
+            .replace("__NAV__", nav_html("analysis") if a.nav else "")
             .replace("__ASOF__", asof_html(rows, ref))
             .replace("__SOURCES__", sources_html(ref, generated, a.demo, notes))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))
