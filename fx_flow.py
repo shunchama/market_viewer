@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 import market_flow as mf
-from market_flow import asof_html, last_span, lst, load_prices, nav_html, notify
+from market_flow import THEME_BODY, THEME_HEAD, asof_html, last_span, lst, load_prices, nav_html, notify
 
 RATE_LAST = {}   # 金利キー -> (最終日, 出典)
 
@@ -266,13 +266,14 @@ const fmt=(x,d=1)=>x==null?'-':(x>=0?'+':'')+x.toFixed(d)+'%';
 const yen=v=>(v>=0?'+':'')+v.toFixed(2)+'円';
 const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
-const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const L0=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const L=()=>{const b=L0(),p=PLT();return{...b,...p,font:{...b.font,...(p.font||{})}}};
 const T=s=>({text:s,font:{size:M()?14:17}});
 const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('beforebegin',el)}el.innerHTML='📅 '+html};
 const chip=(ts,end)=>{const LV=D.last||{},ds=ts.map(t=>LV[t]).filter(Boolean);if(!ds.length)return '不明';
  const mx=ds.reduce((a,b)=>a>b?a:b),ref=mx<end?mx:end,late=ts.filter(t=>LV[t]&&LV[t]<ref);
  return `<b>${ref}</b>`+(late.length?` <span class="stale">(${late.length}本は${[...new Set(late.map(t=>LV[t].slice(5)))].join('・')}が最新)</span>`:'')};
-const COL=[[0,'#3f7fae'],[0.5,'#f7f7f7'],[1,'#f08a3c']];
+const COL=()=>TH()?[[0,'#3f7fae'],[0.5,'#2d343e'],[1,'#f08a3c']]:[[0,'#3f7fae'],[0.5,'#f7f7f7'],[1,'#f08a3c']];
 function corr(x,y){const n=x.length;if(n<10)return null;const mx=x.reduce((a,b)=>a+b)/n,my=y.reduce((a,b)=>a+b)/n;
  let sxy=0,sx=0,sy=0;for(let i=0;i<n;i++){sxy+=(x[i]-mx)*(y[i]-my);sx+=(x[i]-mx)**2;sy+=(y[i]-my)**2}return(sx&&sy)?sxy/Math.sqrt(sx*sy):null}
 
@@ -291,7 +292,7 @@ function render(){
  const PN=[1,5,21,63],cols=['1日','1週','1ヶ月','3ヶ月'],z=chg.map(c=>PN.map(n=>pct(F[c.t][e],F[c.t][e-n])));
  const lim=Math.max(1,...z.flat().filter(v=>v!=null).map(Math.abs));
  const hv=chg.map((c,i)=>PN.map((n,k)=>{const y=F[c.t][e-n],x=F[c.t][e];return`<b>${c.name}/円</b>  ${cols[k]}: ${fmt(z[i][k],2)}<br>${x==null?'-':x.toFixed(2)}円(${(x==null||y==null)?'-':yen(x-y)})`}));
- Plotly.react('c1',[{type:'heatmap',z,x:cols,y:chg.map(c=>c.name+'/円'),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?10:11},colorscale:COL,
+ Plotly.react('c1',[{type:'heatmap',z,x:cols,y:chg.map(c=>c.name+'/円'),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?10:11},colorscale:COL(),
   text:z.map(r=>r.map(v=>v==null?'':v.toFixed(2)+'%')),texttemplate:'%{text}',hovertext:hv,hovertemplate:'%{hovertext}<extra></extra>'}],
   {...L(),title:T('① クロス円の変化率(橙=円安 / 青=円高)'),height:100+40*chg.length,yaxis:{autorange:'reversed'}},CFG);
 
@@ -391,9 +392,9 @@ def main():
     for k, nm in RATE_NAMES.items():
         d, src = RATE_LAST.get(k, (None, ""))
         rows.append((nm, d, f"出典: {src}" if src else "取得できず"))
-    html = (PAGE.replace("__PLOTLY__", plotly_tag)
+    html = (PAGE.replace("__PLOTLY__", THEME_HEAD + plotly_tag)
             .replace("__ASOF__", asof_html(rows, d_fx or asof))
-            .replace("__NAV__", nav_html("fx") if a.nav else "")
+            .replace("__NAV__", THEME_BODY + (nav_html("fx") if a.nav else ""))
             .replace("__SOURCES__", sources_html(asof, generated, a.demo))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))
             .replace("__DATA__", data_json))

@@ -23,7 +23,7 @@ import pandas as pd
 
 import market_flow as mf
 from fx_flow import FRED_URL, _clean, _http, parse_fred
-from market_flow import MARKETS, asof_html, date_str, last_span, lst, nav_html
+from market_flow import MARKETS, THEME_BODY, THEME_HEAD, asof_html, date_str, last_span, lst, nav_html
 
 MACRO = {"^VIX": "VIX", "^VIX3M": "VIX3M(3か月)", "^VIX9D": "VIX9D(9日)", "^GSPC": "S&P500", "^N225": "日経平均",
          "DX-Y.NYB": "ドル指数", "HG=F": "銅先物", "GC=F": "金先物",
@@ -219,7 +219,8 @@ __SOURCES__
 const D=JSON.parse(document.getElementById('data').textContent),META=__META__,REF=D.ref,$=id=>document.getElementById(id);
 const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
-const L=()=>M()?{font:{family:FONT,size:11},margin:{l:96,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const L0=()=>M()?{font:{family:FONT,size:11},margin:{l:96,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const L=()=>{const b=L0(),p=PLT();return{...b,...p,font:{...b.font,...(p.font||{})}}};
 const T=s=>({text:s,font:{size:M()?14:17}});
 const st={months:6,mkt:'jp'};
 const dt=(id,html)=>{let el=$('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;$(id).insertAdjacentElement('beforebegin',el)}el.innerHTML='📅 '+html};
@@ -423,8 +424,8 @@ def main():
         from plotly.offline import get_plotlyjs
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
     meta = {"generated": generated, "label": "(DEMO)" if a.demo else ""}
-    html = (PAGE.replace("__PLOTLY__", plotly_tag)
-            .replace("__NAV__", nav_html("analysis") if a.nav else "")
+    html = (PAGE.replace("__PLOTLY__", THEME_HEAD + plotly_tag)
+            .replace("__NAV__", THEME_BODY + (nav_html("analysis") if a.nav else ""))
             .replace("__ASOF__", asof_html(rows, ref))
             .replace("__SOURCES__", sources_html(ref, generated, a.demo, notes))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))

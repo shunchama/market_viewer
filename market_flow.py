@@ -141,6 +141,41 @@ def last_span(tickers):
     return mx, note
 
 
+THEME_HEAD = """<script>(function(){try{var t=localStorage.getItem('theme');if(!t)t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';document.documentElement.setAttribute('data-theme',t)}catch(e){document.documentElement.setAttribute('data-theme','light')}})()</script>
+<style>
+[data-theme=dark]{color-scheme:dark}
+[data-theme=dark] body{background:#1a1f26;color:#e2e6ec}
+[data-theme=dark] .sub,[data-theme=dark] .note,[data-theme=dark] .ctl label,[data-theme=dark] .asof summary{color:#9aa6b4}
+[data-theme=dark] .dt{color:#9fb0c0}
+[data-theme=dark] .ctl{background:#1a1f26ee;border-bottom-color:#303843}
+[data-theme=dark] .ctl button,[data-theme=dark] .ctl select,[data-theme=dark] .ctl input,[data-theme=dark] .ixb button{background:#262d37;color:#e2e6ec;border-color:#3a4350}
+[data-theme=dark] .ctl button.on,[data-theme=dark] .ixb button.on{background:#3b7f91;border-color:#3b7f91;color:#fff}
+[data-theme=dark] .sum{background:#232a33;color:#e2e6ec}
+[data-theme=dark] hr.sep{border-top-color:#303843}
+[data-theme=dark] table.h th,[data-theme=dark] table.mini th,[data-theme=dark] .asof th{background:#2a323d;color:#e2e6ec}
+[data-theme=dark] table.h td,[data-theme=dark] table.h th,[data-theme=dark] table.mini td,[data-theme=dark] table.mini th,[data-theme=dark] .asof td,[data-theme=dark] .asof th{border-bottom-color:#303843}
+[data-theme=dark] .up{background:#1f4a37;color:#d8f5e5}[data-theme=dark] .dn{background:#573229;color:#fbdcd5}
+[data-theme=dark] .hot{background:#573229}[data-theme=dark] .cold{background:#1f4058}
+[data-theme=dark] .src{background:#212830}[data-theme=dark] code{background:#2d353f;color:#dfe5ec}
+[data-theme=dark] .warn,[data-theme=dark] .stale{color:#ff9478}
+[data-theme=dark] .yes{color:#5fd08c}[data-theme=dark] .no{color:#ff8a78}
+[data-theme=dark] h3.sec{background:#2a6f7f}
+[data-theme=dark] .nav a{color:#9fd0dc;border-color:#3a4350}[data-theme=dark] .nav a.on{background:#3b7f91;border-color:#3b7f91;color:#fff}
+#themeBtn{position:fixed;right:12px;bottom:12px;z-index:20;width:42px;height:42px;border-radius:50%;border:1px solid #9aa4ae;background:#fffffff0;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 2px 8px #0003;padding:0}
+[data-theme=dark] #themeBtn{background:#262d37;border-color:#3a4350}
+</style>"""
+
+THEME_BODY = """<button id="themeBtn" type="button" title="明るい表示 / 暗い表示を切り替え" aria-label="表示の切り替え"></button>
+<script>
+const TH=()=>document.documentElement.getAttribute('data-theme')==='dark';
+const PLT=()=>TH()?{paper_bgcolor:'rgba(0,0,0,0)',plot_bgcolor:'#202730',font:{color:'#d5dbe3'},template:{layout:{
+ xaxis:{gridcolor:'#303a46',linecolor:'#46515f',zerolinecolor:'#46515f'},yaxis:{gridcolor:'#303a46',linecolor:'#46515f',zerolinecolor:'#46515f'}}}}:{};
+(function(){var b=document.getElementById('themeBtn');var set=function(){b.textContent=TH()?'☀️':'🌙'};set();
+ b.onclick=function(){var t=TH()?'light':'dark';document.documentElement.setAttribute('data-theme',t);try{localStorage.setItem('theme',t)}catch(e){}set();if(typeof render==='function')render()}})();
+</script>
+"""
+
+
 def nav_html(active):
     """ページ間ナビ(index.html=日本株, us.html=米国株, fx.html=為替)。公開フォルダ内の相対リンク。"""
     items = (("index.html", "株式(日本)", "jp"), ("us.html", "株式(米国)", "us"), ("fx.html", "為替", "fx"), ("analysis.html", "分析", "analysis"))
@@ -263,6 +298,58 @@ def load_shares(tickers, index, store_path, demo=False, close=None):
 
 
 # ───────────────────────── 集計(通知・検証用) ─────────────────────────
+def load_index(ticker, demo=False):
+    """指数の日足(OHLC)と、直近5営業日の日中足。取れなかった部分は None。日中足は日本時間に直す。"""
+    out = {"daily": None, "intra": None}
+    if demo:
+        rng = np.random.default_rng(41)
+        idx = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=252)
+        c = 38000 * np.exp(np.cumsum(rng.normal(0.0004, 0.011, len(idx))))
+        o = np.r_[c[0], c[:-1]] * (1 + rng.normal(0, 0.003, len(idx)))
+        h = np.maximum(o, c) * (1 + np.abs(rng.normal(0, 0.004, len(idx))))
+        lo = np.minimum(o, c) * (1 - np.abs(rng.normal(0, 0.004, len(idx))))
+        out["daily"] = pd.DataFrame({"Open": o, "High": h, "Low": lo, "Close": c}, index=idx).round(2)
+        p, times, vals = float(out["daily"]["Open"].iloc[-5]), [], []
+        for d in idx[-5:]:
+            for t in (list(pd.date_range(d + pd.Timedelta(hours=9), d + pd.Timedelta(hours=11, minutes=30), freq="5min"))
+                      + list(pd.date_range(d + pd.Timedelta(hours=12, minutes=30), d + pd.Timedelta(hours=15, minutes=30), freq="5min"))):
+                p *= 1 + rng.normal(0, 0.0006)
+                times.append(t)
+                vals.append(p)
+        out["intra"] = (pd.Series(vals, index=pd.DatetimeIndex(times)), "5分足")
+        return out
+    import yfinance as yf
+
+    def dl(**kw):
+        df = yf.download(ticker, progress=False, threads=False, auto_adjust=False, **kw)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df
+    try:
+        d = dl(period="1y")[["Open", "High", "Low", "Close"]].dropna()
+        if len(d):
+            out["daily"] = d
+    except Exception as e:  # noqa: BLE001
+        print(f"[warn] {ticker} 日足の取得失敗: {type(e).__name__}: {e}")
+    for iv, label in (("5m", "5分足"), ("30m", "30分足")):
+        try:
+            df = dl(period="5d", interval=iv)
+            if df.empty:
+                continue
+            idx = pd.DatetimeIndex(df.index)
+            if idx.tz is not None:
+                idx = idx.tz_convert("Asia/Tokyo").tz_localize(None)
+            s = pd.Series(df["Close"].values, index=idx).dropna()
+            days = sorted(set(s.index.normalize()))[-5:]
+            s = s[s.index.normalize().isin(days)]
+            if len(s):
+                out["intra"] = (s, label)
+                break
+        except Exception as e:  # noqa: BLE001
+            print(f"[warn] {ticker} {iv}の取得失敗: {type(e).__name__}: {e}")
+    return out
+
+
 def flows(close, vol, shares, sectors, window):
     """各セクターのフロー。proxy=値上がり率x売買代金, actual=口数増減x終値。単位: 通貨"""
     tick = [t for t in sectors if t in close.columns]
@@ -352,6 +439,7 @@ h2{margin:18px 0 4px}.sub{color:#666;font-size:13px;margin:0 0 10px}
 .ctl button.on{background:#264653;color:#fff;border-color:#264653}
 .ctl label{font-size:12px;color:#666}.ctl input[type=number]{width:56px}
 .sum{font-size:15px;margin:12px 0 2px}.note{color:#777;font-size:12px;margin:0 0 6px}
+.ixb{margin:6px 0}.ixb button{font:inherit;padding:4px 10px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer;margin-right:4px}.ixb button.on{background:#264653;color:#fff;border-color:#264653}
 .chart{width:100%}.dt{font-size:12px;color:#5a6b7a;margin:2px 0 0}hr.sep{border:0;border-top:2px solid #cfd6df;margin:30px 0 14px}table.h,table.mini{border-collapse:collapse;font-size:13px;width:100%}
 table.h th,table.h td,table.mini th,table.mini td{padding:6px 8px;border-bottom:1px solid #eee;text-align:left}
 table.h th,table.mini th{background:#e8edf3}.up{background:#d8f3dc}.dn{background:#fde2dd}
@@ -380,6 +468,12 @@ __ASOF__
  <select id="mode"><option value="auto">自動</option><option value="actual">実フロー(口数×価格)</option><option value="proxy">近似(値動き×売買代金)</option></select>
 </div>
 <p class="sum" id="sum"></p><p class="note" id="modenote"></p>
+<div id="ixbox" style="display:none">
+<hr class="sep"><p class="sum" id="ixsum" style="margin-top:0"></p>
+<p class="note" id="ixn1"></p><div id="ix1" class="chart"></div>
+<hr class="sep"><p class="note">日足のローソク足(1日の始値・高値・安値・終値)。緑=上昇(終値が始値より高い)、赤=下落。線は25日・75日の移動平均(終値の平均)で、価格がこの線より上か下かがトレンドの目安になります。</p>
+<div class="ixb">表示期間 <span id="ixmon"></span></div><div id="ix2" class="chart"></div>
+</div>
 <hr class="sep">
 <p class="note">① 騰落率は終了日基準(1日=前日比、1週=5営業日、1ヶ月=21営業日、3ヶ月=63営業日)。マスにマウスを乗せると、代表銘柄の変動率と変動幅(円/ドル)を表示します。代表銘柄は各セクターの時価総額上位から手動で選んだもので、ETFの公式な構成銘柄ではありません。</p><div id="c1" class="chart"></div>
 <hr class="sep">
@@ -398,14 +492,15 @@ __SOURCES__
 const D=JSON.parse(document.getElementById('data').textContent);
 const META=__META__;
 const N=D.dates.length, MIN_END=Math.min(80,N-1), secs=D.sectors, C=D.close, V=D.vol, S=D.shares, B=D.bench;
-const st={end:N-1,weeks:META.weeks,mode:'auto'};
+const st={end:N-1,weeks:META.weeks,mode:'auto',ixm:63};
 const $=id=>document.getElementById(id);
 const pct=(a,b)=>(a==null||b==null||b===0)?null:(a/b-1)*100;
 const fmt=(x,d=1)=>x==null?'-':(x>=0?'+':'')+x.toFixed(d)+'%';
 const oku=x=>(x/1e8).toFixed(1)+(META.cur==='JPY'?'億円':'億ドル');
 const M=()=>window.innerWidth<640,CFG={displayModeBar:false,responsive:true};
 const FONT='-apple-system,Hiragino Sans,Noto Sans JP,sans-serif';
-const L=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const L0=()=>M()?{font:{family:FONT,size:11},margin:{l:112,r:10,t:44,b:44}}:{font:{family:FONT},margin:{l:140,r:30,t:50,b:50}};
+const L=()=>{const b=L0(),p=PLT();return{...b,...p,font:{...b.font,...(p.font||{})}}};
 const T=s=>({text:s,font:{size:M()?14:17}});
 const dt=(id,html)=>{let el=document.getElementById('dt_'+id);if(!el){el=document.createElement('p');el.className='dt';el.id='dt_'+id;document.getElementById(id).insertAdjacentElement('beforebegin',el)}el.innerHTML='📅 '+html};
 const chip=(ts,end)=>{const LV=D.last||{},ds=ts.map(t=>LV[t]).filter(Boolean);if(!ds.length)return '不明';
@@ -432,6 +527,38 @@ function metrics(){
  return{rows,mode,a,e,w,missing:rows.length-ok.length};
 }
 
+
+const IXC={up:'#2a9d8f',dn:'#e76f51'};
+function renderIndex(){
+ const IX=D.index,box=$('ixbox');
+ if(!IX||(!IX.daily&&!IX.intra)){box.style.display='none';return}
+ box.style.display='';
+ const nf=(x,d=2)=>x.toLocaleString(undefined,{maximumFractionDigits:d,minimumFractionDigits:d}),pm=x=>(x>=0?'+':'');
+ const lay=()=>({...PLT(),font:{family:FONT,size:M()?11:12,...(PLT().font||{})},margin:M()?{l:52,r:8,t:44,b:44}:{l:70,r:20,t:50,b:44}});
+ if(IX.daily){const c=IX.daily.c,n=c.length,l=c[n-1],p=c[n-2],ch=l-p;
+  $('ixsum').innerHTML=`${IX.name} <b>${nf(l)}</b>円　前日比 <b style="color:${ch>=0?'#1a9850':'#c0392b'}">${pm(ch)}${nf(ch)}(${pm(ch)}${nf(ch/p*100)}%)</b>　高値 ${nf(IX.daily.h[n-1])} / 安値 ${nf(IX.daily.l[n-1])}(${IX.daily.d[n-1]})`}
+ else $('ixsum').textContent=IX.name;
+ // 直近5営業日の日中ライン
+ if(IX.intra){const t=IX.intra.t,c=IX.intra.c,days=[...new Set(t.map(s=>s.slice(0,10)))],miss=[];
+  for(let d=new Date(days[0]);d<=new Date(days[days.length-1]);d.setUTCDate(d.getUTCDate()+1)){const s=d.toISOString().slice(0,10),wd=d.getUTCDay();if(wd!==0&&wd!==6&&!days.includes(s))miss.push(s)}
+  const up=c[c.length-1]>=c[0];
+  Plotly.react('ix1',[{type:'scatter',mode:'lines',x:t,y:c,line:{color:up?IXC.up:IXC.dn,width:2},hovertemplate:'%{x}<br>%{y:,.2f}<extra></extra>'}],
+   {...lay(),title:{text:`${IX.name} 直近5営業日(${IX.intra.iv})`,font:{size:M()?14:17}},height:M()?300:340,showlegend:false,
+    xaxis:{type:'date',rangebreaks:[{bounds:['sat','mon']},{bounds:[15.5,9],pattern:'hour'},{bounds:[11.5,12.5],pattern:'hour'},...(miss.length?[{values:miss}]:[])],tickformat:'%m/%d %H:%M'},
+    yaxis:{tickformat:',.0f'},shapes:days.map(d=>({type:'line',x0:d+' 09:00',x1:d+' 09:00',yref:'paper',y0:0,y1:1,line:{color:'#ccc',dash:'dot',width:1}}))},CFG);
+  $('ixn1').textContent=`${IX.name}の直近5営業日の値動き(日中・${IX.intra.iv})。点線は各日の寄り付き(9:00)、昼休み・夜間・休場日は詰めて表示しています。`;
+  dt('ix1',`最終 <b>${t[t.length-1]}</b>(無料データのため、実際より遅れることがあります)`)}
+ else{Plotly.purge('ix1');$('ix1').innerHTML='<p class="note">日中データを取得できませんでした。</p>';$('ixn1').textContent=''}
+ // 日足ローソク
+ if(IX.daily){const d=IX.daily,n=d.d.length,N0=Math.min(st.ixm,n),s0=n-N0,ma=k=>d.c.map((_,i)=>{if(i<k-1)return null;let s=0;for(let j=i-k+1;j<=i;j++)s+=d.c[j];return s/k}),m25=ma(25),m75=ma(75),sl=a=>a.slice(s0);
+  Plotly.react('ix2',[{type:'candlestick',x:sl(d.d),open:sl(d.o),high:sl(d.h),low:sl(d.l),close:sl(d.c),name:'日足',increasing:{line:{color:IXC.up},fillcolor:IXC.up},decreasing:{line:{color:IXC.dn},fillcolor:IXC.dn}},
+   {type:'scatter',mode:'lines',x:sl(d.d),y:sl(m25),name:'25日線',line:{color:'#e9a23b',width:1.6},hoverinfo:'skip',connectgaps:false},
+   {type:'scatter',mode:'lines',x:sl(d.d),y:sl(m75),name:'75日線',line:{color:'#6a4c93',width:1.6},hoverinfo:'skip',connectgaps:false}],
+   {...lay(),title:{text:`${IX.name} 日足`,font:{size:M()?14:17}},height:M()?380:440,xaxis:{type:'category',rangeslider:{visible:false},nticks:M()?5:9,tickangle:0},yaxis:{tickformat:',.0f'},
+    legend:{orientation:'h',y:-0.12,font:{size:M()?10:12}}},CFG);
+  dt('ix2',`日足 <b>${d.d[n-1]}</b>(終値)`)}
+ document.querySelectorAll('#ixmon button').forEach(b=>b.classList.toggle('on',+b.dataset.n===st.ixm))}
+
 function render(){
  const m=metrics(),{rows,mode,a,e,w}=m,unit=mode==='actual'?'実フロー(口数増減×終値)':'近似フロー(値上がり率×売買代金)';
  const rng=`${D.dates[a]} → ${D.dates[e]}(${w}営業日)`;
@@ -449,7 +576,7 @@ function render(){
  const hv=h.map((row,i)=>PN.map((n,k)=>{const lines=(D.reps[row.t]||[]).map(r=>{const c=D.rclose[r.t];if(!c)return null;const x=c[e],y=c[e-n];
    return(x==null||y==null||!y)?null:`${r.name}  ${fmt((x/y-1)*100,2)}(${money(x-y)})`}).filter(Boolean);
   return`<b>${row.name}</b>  ${cols[k]}: ${fmt(z[i][k],2)}`+(lines.length?'<br>代表銘柄:<br>'+lines.join('<br>'):'')}));
- Plotly.react('c1',[{type:'heatmap',z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?9:11},colorscale:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
+ Plotly.react('c1',[{type:'heatmap',z,x:cols,y:h.map(r=>r.name),zmid:0,zmin:-lim,zmax:lim,showscale:!M(),textfont:{size:M()?9:11},colorscale:TH()?[[0,'#c0392b'],[0.25,'#7d3b36'],[0.5,'#2d343e'],[0.75,'#2f6f52'],[1,'#27ae60']]:[[0,'#b2182b'],[0.25,'#f4a582'],[0.5,'#ffffbf'],[0.75,'#a6d96a'],[1,'#1a9850']],
   text:z.map(rw=>rw.map(v=>v==null?'':v.toFixed(1)+'%')),texttemplate:'%{text}',hovertext:hv,hovertemplate:'%{hovertext}<extra></extra>'}],
   {...L(),title:T('① セクター別騰落率'),height:80+28*h.length,yaxis:{autorange:'reversed'}},CFG);
 
@@ -507,6 +634,7 @@ function render(){
  dt('c4',`ETF終値(ベンチマーク含む) ${chip([...secT,B],end)}`);
  if(D.holdings.length)dt('c5',`保有・監視銘柄の終値 ${chip(D.holdings.map(x=>x.t),end)}`);
  dt('c6',flowTxt);
+ renderIndex();
 }
 
 // ── controls ──
@@ -520,6 +648,7 @@ $('end').onchange=ev=>{let i=D.dates.length-1;while(i>MIN_END&&D.dates[i]>ev.tar
 $('prev').onclick=()=>{st.end=Math.max(MIN_END,st.end-5);render()};
 $('next').onclick=()=>{st.end=Math.min(N-1,st.end+5);render()};
 $('latest').onclick=()=>{st.end=N-1;render()};
+[[21,'1か月'],[63,'3か月'],[126,'6か月'],[250,'1年']].forEach(([n,l])=>{const b=document.createElement('button');b.textContent=l;b.dataset.n=n;b.onclick=()=>{st.ixm=n;renderIndex()};$('ixmon').appendChild(b)});
 let wasM=M();addEventListener('resize',()=>{if(M()!==wasM){wasM=M();render()}});
 render();
 </script></body></html>"""
@@ -576,6 +705,24 @@ def main():
     if groups:
         d_h, n_h = last_span(extra)
         rows.append(("保有・監視銘柄", d_h, n_h))
+    index = None
+    if a.market == "jp":
+        ix = load_index("^N225", demo=a.demo)
+        if ix["daily"] is not None or ix["intra"] is not None:
+            index = {"name": "日経平均", "ticker": "^N225", "daily": None, "intra": None}
+            if ix["daily"] is not None:
+                dd = ix["daily"].tail(260)
+                index["daily"] = {"d": [x.strftime("%Y-%m-%d") for x in dd.index], "o": lst(dd["Open"]), "h": lst(dd["High"]),
+                                  "l": lst(dd["Low"]), "c": lst(dd["Close"])}
+                rows.append(("日経平均(日足)", dd.index[-1], "指数の日足(始値・高値・安値・終値)"))
+            if ix["intra"] is not None:
+                s, iv = ix["intra"]
+                index["intra"] = {"t": [x.strftime("%Y-%m-%d %H:%M") for x in s.index],
+                                  "c": [round(float(v), 2) for v in s.values], "iv": iv}
+                rows.append(("日経平均(5日・日中)", s.index[-1], f"{iv}・最終 {s.index[-1]:%m/%d %H:%M}(遅延の可能性)"))
+        else:
+            rows.append(("日経平均(日足・日中)", None, "取得できず(この図は非表示)"))
+    payload["index"] = index
     meta = {"weeks": max(1, round(a.window / 5)), "cur": "JPY" if a.market == "jp" else "USD",
             "label": f"({a.market.upper()}{' / DEMO' if a.demo else ''})",
             "generated": generated}
@@ -584,9 +731,9 @@ def main():
         from plotly.offline import get_plotlyjs
         plotly_tag = f"<script>{get_plotlyjs()}</script>"
     data_json = json.dumps(payload, ensure_ascii=False, allow_nan=False).replace("</", "<\\/")
-    html = (PAGE.replace("__PLOTLY__", plotly_tag)
+    html = (PAGE.replace("__PLOTLY__", THEME_HEAD + plotly_tag)
             .replace("__ASOF__", asof_html(rows, d_etf or asof))
-            .replace("__NAV__", nav_html(a.market) if a.nav else "")
+            .replace("__NAV__", THEME_BODY + (nav_html(a.market) if a.nav else ""))
             .replace("__SOURCES__", sources_html(cfg, bench_name, asof, generated, a.demo, sectors))
             .replace("__META__", json.dumps(meta, ensure_ascii=False))
             .replace("__DATA__", data_json))
